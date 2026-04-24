@@ -56,12 +56,72 @@ class StateController(Controller):
                 [0.5, -1.1, 0.9],
             ]
         )
+
+        self._gates_rpy = np.array([-0.78, 2.35, 3.14, 0.0])
+        self._gates_position = np.array([[0.5 , 0.25, 0.7], 
+                                         [1.05, 0.75, 1.2], 
+                                         [-1.0, -0.25, 0.7],
+                                         [0.0, -0.75, 1.2]]) # four gates
         self._t_total = 15  # s
         t = np.linspace(0, self._t_total, len(waypoints))
         self._des_pos_spline = CubicSpline(t, waypoints)
 
         self._tick = 0
         self._finished = False
+
+        self._first_iteration = True
+
+    def compute_waypoint_trajectory(self, t, current_gate_index, gate_position_array, pBL, vel_vec, alpha=0.3):
+        pT = gate_position_array[current_gate_index]
+        pBL_next = (0.1*vel_vec/(np.linalg.norm(vel_vec))+0.001) + pBL # add 0.001 for numerical stability
+
+        pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[0], -0.78)
+        if current_gate_index == 0 and self._first_iteration == False:
+            pGL_prev = alpha*pBL_next + (1-alpha)*pGL_prev
+
+        new_waypoints = np.array([[-1.5, 0.75, 0.05]])
+        new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
+        new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
+        new_waypoints = np.append(new_waypoints, [[1.25, -0.5, 0.7]], axis=0)
+        new_waypoints = np.append(new_waypoints, [[2.0, 0.0, 1.2]], axis=0)
+
+        pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[1], 2.35)
+        if current_gate_index == 1:
+            pGL_prev = alpha*pBL_next + (1-alpha)*pGL_prev
+        
+        new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
+        new_waypoints = np.append(new_waypoints, [gate_position_array[1]], axis=0)
+        new_waypoints = np.append(new_waypoints, [[0.0, 1.0, 0.9]], axis=0)
+        new_waypoints = np.append(new_waypoints, [[-0.5, -0.05, 0.7]], axis=0)
+
+        pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[2], 3.14, 0.4, 0.1)
+        if current_gate_index == 2:
+            pGL_prev = alpha*pBL_next + (1-alpha)*pGL_prev
+
+        new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
+        new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
+        new_waypoints = np.append(new_waypoints, [[pGL_next[0], pGL_next[1], 1.2]], axis=0)
+        new_waypoints = np.append(new_waypoints, [[-0.5, -0.5, 1.2]], axis=0)
+        
+        pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[3], 0.0, 0.2, 0.4)
+        if current_gate_index == 3:
+            pGL_prev = alpha*pBL_next + (1-alpha)*pGL_prev
+
+        new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
+        new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
+
+        t_array = np.linspace(0, self._t_total, len(new_waypoints))
+        des_pos_spline = CubicSpline(t_array, new_waypoints)
+
+        return des_pos_spline
+
+    def compute_prev_and_next_gate_waypoint(self, pTL, alpha, offset_prev = 0.4, offset_next = 0.4):
+        pDelta = np.array([np.cos(alpha), np.sin(alpha), 0])
+        pTL_prev = pTL - offset_prev*pDelta
+        pTL_next = pTL + offset_next*pDelta
+
+        return pTL_prev, pTL_next
+
 
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
@@ -80,6 +140,22 @@ class StateController(Controller):
         t = min(self._tick / self._freq, self._t_total)
         if t >= self._t_total:  # Maximum duration reached
             self._finished = True
+        
+        pTL_index = obs['target_gate']
+        pTL_array = obs['gates_pos']
+        pBL = obs['pos']
+        vBLL = obs['vel']
+        pTL = pTL_array[pTL_index]
+        
+        dTB_2D = np.linalg.norm(pTL[:2] - pBL[:2])
+
+        if (self._first_iteration == True) or (np.linalg.norm(self._gates_position[pTL_index] - pTL) > 0.01 and (dTB_2D < 0.65)):
+            # compute new trajectory
+            pos_des = self._des_pos_spline(t)
+            new_spline = self.compute_waypoint_trajectory(t, pTL_index, pTL_array, pBL, vBLL) # TBD: calculate new trajectory once new information about the gates-position is available
+            self._des_pos_spline = new_spline
+            self._first_iteration = False
+            self._gates_position = pTL_array
 
         des_pos = self._des_pos_spline(t)
         action = np.concatenate((des_pos, np.zeros(10)), dtype=np.float32)
