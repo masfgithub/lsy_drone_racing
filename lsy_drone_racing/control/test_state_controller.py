@@ -41,25 +41,8 @@ class StateController(Controller):
         """
         super().__init__(obs, info, config)
         self._freq = config.env.freq
-
-        # Same waypoints as in the attitude controller. Determined by trial and error.
-        waypoints = np.array(
-            [
-                [-1.5, 0.75, 0.05],
-                [0.13, 0.5, 0.6],
-                [0.63, 0.13, 0.6],
-                [1.25, -0.5, 0.6],
-                [1.75, 0.0, 1.0],
-                [0.7, 0.8, 1.1],
-                [-0.5, -0.05, 0.7],
-                [-1.2, -0.3, 0.7],
-                [-1.2, -0.3, 1.2],
-                [-0.5, -0.5, 1.2],
-                [0.5, -1.1, 0.9],
-            ]
-        )
-
-        self.estimated_sector_times = np.array([4.0, 3.0, 5.0, 3.0])
+        
+        self.estimated_sector_times = np.array([4.0, 3.0, 4.5, 3.0])
 
         self.nominal_gates_rpy = np.array([[0.0, 0.0, -0.78],
                                         [0.0, 0.0, 2.35],
@@ -76,8 +59,8 @@ class StateController(Controller):
                                          [-0.5, -0.75, 1.55]]) 
 
         self._t_total = 25  # s
-        t = np.linspace(0, self._t_total, len(waypoints))
-        self._des_pos_spline = CubicSpline(t, waypoints)
+        #t = np.linspace(0, self._t_total, len(waypoints))
+        self._des_pos_spline = None#CubicSpline(t, waypoints)
 
         self._tick = 0
         self._finished = False
@@ -299,7 +282,7 @@ class StateController(Controller):
         #    # compute new trajectory
         #    #violated_obstacle = violation[0] 
         #    #i_violated_obstacle = violation[1]
-            pos_des = self._des_pos_spline(t)
+        #    pos_des = self._des_pos_spline(t)
             new_spline = self.compute_waypoint_trajectory(t, pTL_index, pTL_array, pBL, vBLL) # TBD: calculate new trajectory once new information about the gates-position is available
             self._des_pos_spline = new_spline
             self._first_iteration = False
