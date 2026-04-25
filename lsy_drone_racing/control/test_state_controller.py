@@ -59,7 +59,7 @@ class StateController(Controller):
             ]
         )
 
-        self.estimated_sector_times = np.array([4.0, 3.0, 6.0, 3.0])
+        self.estimated_sector_times = np.array([4.0, 3.0, 5.0, 3.0])
 
         self.nominal_gates_rpy = np.array([[0.0, 0.0, -0.78],
                                         [0.0, 0.0, 2.35],
@@ -134,7 +134,7 @@ class StateController(Controller):
         if add_waypoint is not None:
             new_waypoints = np.append(new_waypoints, [add_waypoint], axis=0)
 
-        new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
+        #new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
         new_waypoints = np.append(new_waypoints, [gate_position_array[0]], axis=0)
         new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
         new_waypoints = np.append(new_waypoints, [[1.25, 0.0, 1.0]], axis=0)
