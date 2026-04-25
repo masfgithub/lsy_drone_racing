@@ -83,7 +83,7 @@ class StateController(Controller):
         self._finished = False
 
         self._first_iteration = True
-
+        #test command
         drone_params = load_params(config.sim.physics, config.sim.drone_model)
         self.drone_mass = drone_params["mass"]
 
