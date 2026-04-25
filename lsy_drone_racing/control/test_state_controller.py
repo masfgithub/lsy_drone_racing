@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from crazyflow.sim.visualize import draw_line, draw_points
+from drone_models.core import load_params
 from scipy.interpolate import CubicSpline
+from scipy.spatial.transform import Rotation as R
 
 from lsy_drone_racing.control import Controller
 
@@ -62,7 +64,7 @@ class StateController(Controller):
                                          [1.05, 0.75, 1.2], 
                                          [-1.0, -0.25, 0.7],
                                          [0.0, -0.75, 1.2]]) # four gates
-        self._t_total = 15  # s
+        self._t_total = 25  # s
         t = np.linspace(0, self._t_total, len(waypoints))
         self._des_pos_spline = CubicSpline(t, waypoints)
 
@@ -71,57 +73,119 @@ class StateController(Controller):
 
         self._first_iteration = True
 
+        drone_params = load_params(config.sim.physics, config.sim.drone_model)
+        self.drone_mass = drone_params["mass"]
+
+        self.kp = np.array([0.5, 0.5, 1.5])
+        self.ki = np.array([0.06, 0.06, 0.06])
+        self.kd = np.array([0.5, 0.5, 0.5])
+        self.ki_range = np.array([2.0, 2.0, 0.4])
+        self.i_error = np.zeros(3)
+        self.g = 9.81
+
+        self._prev_action = []
+
+        self._old_gate_index = -1
+        self._sector_times = np.array([0.0, 0.0, 0.0, 0.0])
+
+    def is_element(self, elem, arr):
+        for i in range(0, len(arr)):
+            if elem == arr[i]:
+                return True
+
+        return False
+
     def compute_waypoint_trajectory(self, t, current_gate_index, gate_position_array, pBL, vel_vec, alpha=0.3):
-        pT = gate_position_array[current_gate_index]
-        pBL_next = (0.1*vel_vec/(np.linalg.norm(vel_vec))+0.001) + pBL # add 0.001 for numerical stability
+        if self.is_element(current_gate_index, [0]):
+            if self._old_gate_index != current_gate_index:
+                self._sector_times[0] = t
+                self._old_gate_index = current_gate_index
 
-        pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[0], -0.78)
-        if current_gate_index == 0 and self._first_iteration == False:
-            pGL_prev = alpha*pBL_next + (1-alpha)*pGL_prev
+            pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[0], -0.78)
 
-        new_waypoints = np.array([[-1.5, 0.75, 0.05]])
-        new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
-        new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
-        new_waypoints = np.append(new_waypoints, [[1.25, -0.5, 0.7]], axis=0)
-        new_waypoints = np.append(new_waypoints, [[2.0, 0.0, 1.2]], axis=0)
+            new_waypoints = np.array([[-1.5, 0.75, 0.05]])
+            new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
+            new_waypoints = np.append(new_waypoints, [gate_position_array[0]], axis=0)
+            new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
+            new_waypoints = np.append(new_waypoints, [[1.25, 0.0, 1.0]], axis=0)
 
-        pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[1], 2.35)
-        if current_gate_index == 1:
-            pGL_prev = alpha*pBL_next + (1-alpha)*pGL_prev
+            t_array = np.linspace(self._sector_times[0], self._sector_times[0]+4, len(new_waypoints))
+            print(f'{new_waypoints}')
+            des_pos_spline = CubicSpline(t_array, new_waypoints)
         
-        new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
-        new_waypoints = np.append(new_waypoints, [gate_position_array[1]], axis=0)
-        new_waypoints = np.append(new_waypoints, [[0.0, 1.0, 0.9]], axis=0)
-        new_waypoints = np.append(new_waypoints, [[-0.5, -0.05, 0.7]], axis=0)
+            return des_pos_spline
+        elif self.is_element(current_gate_index, [1]):
+            if self._old_gate_index != current_gate_index:
+                self._sector_times[1] = t
+                self._old_gate_index = current_gate_index
 
-        pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[2], 3.14, 0.4, 0.1)
-        if current_gate_index == 2:
-            pGL_prev = alpha*pBL_next + (1-alpha)*pGL_prev
+            pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[1], 2.35)
+            
+            new_waypoints = np.array([gate_position_array[0]])
+            new_waypoints = np.append(new_waypoints, [[1.25, 0.0, 1.0]], axis=0)
+            new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
+            new_waypoints = np.append(new_waypoints, [gate_position_array[1]], axis=0)
+            new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
+            new_waypoints = np.append(new_waypoints, [[0.0, 1.0, 1.0]], axis=0)
 
-        new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
-        new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
-        new_waypoints = np.append(new_waypoints, [[pGL_next[0], pGL_next[1], 1.2]], axis=0)
-        new_waypoints = np.append(new_waypoints, [[-0.5, -0.5, 1.2]], axis=0)
+            t_array = np.linspace(self._sector_times[1], self._sector_times[1]+3, len(new_waypoints))
+            des_pos_spline = CubicSpline(t_array, new_waypoints)
         
-        pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[3], 0.0, 0.2, 0.4)
-        if current_gate_index == 3:
-            pGL_prev = alpha*pBL_next + (1-alpha)*pGL_prev
+            return des_pos_spline
+        elif self.is_element(current_gate_index, [2]):
+            if self._old_gate_index != current_gate_index:
+                self._sector_times[2] = t
+                self._old_gate_index = current_gate_index
+            
+            pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[2], 3.14, 0.4, 0.1)
+            
+            new_waypoints = np.array([gate_position_array[1]])
+            new_waypoints = np.append(new_waypoints, [[0.0, 0.25, 1.0]], axis=0)
+            new_waypoints = np.append(new_waypoints, [[-0.5, -0.05, 0.8]], axis=0)
+            new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
+            new_waypoints = np.append(new_waypoints, [gate_position_array[2]], axis=0)
+            new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
+            
+            t_array = np.linspace(self._sector_times[2], self._sector_times[2]+7, len(new_waypoints))
+            des_pos_spline = CubicSpline(t_array, new_waypoints)
+        
+            return des_pos_spline
 
-        new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
-        new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
+        elif self.is_element(current_gate_index, [3]):
+            if self._old_gate_index != current_gate_index:
+                self._sector_times[3] = t
+                self._old_gate_index = current_gate_index
 
-        t_array = np.linspace(0, self._t_total, len(new_waypoints))
-        des_pos_spline = CubicSpline(t_array, new_waypoints)
+            
+            pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[3], 0.0, 0.2, 0.4)
+            
+            new_waypoints = np.array([gate_position_array[2]])
+            new_waypoints = np.append(new_waypoints, [[-0.5, -0.5, 0.9]], axis=0)
+            new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
+            new_waypoints = np.append(new_waypoints, [gate_position_array[3]], axis=0)
+            new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
 
-        return des_pos_spline
+            t_array = np.linspace(self._sector_times[3], self._sector_times[3]+2, len(new_waypoints))
+            des_pos_spline = CubicSpline(t_array, new_waypoints)
+        
+            return des_pos_spline
 
-    def compute_prev_and_next_gate_waypoint(self, pTL, alpha, offset_prev = 0.4, offset_next = 0.4):
+    def compute_prev_and_next_gate_waypoint(self, pTL, alpha, offset_prev = 0.2, offset_next = 0.4):
         pDelta = np.array([np.cos(alpha), np.sin(alpha), 0])
         pTL_prev = pTL - offset_prev*pDelta
         pTL_next = pTL + offset_next*pDelta
 
         return pTL_prev, pTL_next
 
+    def check_violated_obstacle(self, pBL, pGL_array, delta=0.2):
+        for i in range(0, len(pGL_array)):
+            pGL = pGL_array[i]
+            dGB_2D = np.linalg.norm(pGL[:2] - pBL[:2])
+
+            if dGB_2D < delta:
+                return [pGL, i]
+
+        return None
 
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
@@ -143,22 +207,79 @@ class StateController(Controller):
         
         pTL_index = obs['target_gate']
         pTL_array = obs['gates_pos']
+        pTL_visited = obs['gates_visited']
+        pGL_array = obs['obstacles_pos']
         pBL = obs['pos']
         vBLL = obs['vel']
+        quat = obs['quat']
         pTL = pTL_array[pTL_index]
         
-        dTB_2D = np.linalg.norm(pTL[:2] - pBL[:2])
+        pGL_visited = obs['obstacles_visited']
 
-        if (self._first_iteration == True) or (np.linalg.norm(self._gates_position[pTL_index] - pTL) > 0.01 and (dTB_2D < 0.65)):
-            # compute new trajectory
+        if pTL_index == -1:
+            self._finished = True
+            return self._prev_action
+
+        dTB_2D = np.linalg.norm(pTL[:2] - pBL[:2])
+        violation = self.check_violated_obstacle(pBL, pGL_array)
+
+        if (self._first_iteration or 
+            (np.linalg.norm(self._gates_position[pTL_index] - pTL) > 0.01 and dTB_2D < 0.65) or 
+            (self._old_gate_index != pTL_index)): #(violation is not None)):
+        #    # compute new trajectory
+        #    #violated_obstacle = violation[0] 
+        #    #i_violated_obstacle = violation[1]
             pos_des = self._des_pos_spline(t)
             new_spline = self.compute_waypoint_trajectory(t, pTL_index, pTL_array, pBL, vBLL) # TBD: calculate new trajectory once new information about the gates-position is available
             self._des_pos_spline = new_spline
             self._first_iteration = False
             self._gates_position = pTL_array
 
-        des_pos = self._des_pos_spline(t)
-        action = np.concatenate((des_pos, np.zeros(10)), dtype=np.float32)
+        action = self.PID(self._des_pos_spline, pBL, vBLL, quat, t)
+        self._prev_action = action
+        #action = np.concatenate((des_pos, np.zeros(10)), dtype=np.float32)
+        return action
+
+    def PID(self, spline, pBL, vBLL, quat, t):
+        vel_spline = spline.derivative()
+        
+        des_pos = spline(t)
+        des_vel = vel_spline(t)
+        des_yaw = 0.0
+
+        # Calculate the deviations from the desired trajectory
+        pos_error = des_pos - pBL
+        vel_error = des_vel - vBLL
+
+        # Update integral error
+        self.i_error += pos_error * (1 / self._freq)
+        self.i_error = np.clip(self.i_error, -self.ki_range, self.ki_range)
+
+        # Compute target thrust
+        target_thrust = np.zeros(3)
+        target_thrust += self.kp * pos_error
+        target_thrust += self.ki * self.i_error
+        target_thrust += self.kd * vel_error
+        target_thrust[2] += self.drone_mass * self.g
+
+        # Update z_axis to the current orientation of the drone
+        z_axis = R.from_quat(quat).as_matrix()[:, 2]
+
+        # update current thrust
+        thrust_desired = target_thrust.dot(z_axis)
+
+        # update z_axis_desired
+        z_axis_desired = target_thrust / np.linalg.norm(target_thrust)
+        x_c_des = np.array([np.cos(des_yaw), np.sin(des_yaw), 0.0])
+        y_axis_desired = np.cross(z_axis_desired, x_c_des)
+        y_axis_desired /= np.linalg.norm(y_axis_desired)
+        x_axis_desired = np.cross(y_axis_desired, z_axis_desired)
+
+        R_desired = np.vstack([x_axis_desired, y_axis_desired, z_axis_desired]).T
+        euler_desired = R.from_matrix(R_desired).as_euler("xyz", degrees=False)
+
+        action = np.concatenate([euler_desired, [thrust_desired]], dtype=np.float32)
+
         return action
 
     def step_callback(
