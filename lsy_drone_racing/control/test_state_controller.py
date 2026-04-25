@@ -42,7 +42,7 @@ class StateController(Controller):
         super().__init__(obs, info, config)
         self._freq = config.env.freq
         
-        self.estimated_sector_times = np.array([4.0, 3.0, 4.5, 3.0])
+        self.estimated_sector_times = np.array([4.0, 2.5, 4.25, 2.5])
 
         self.nominal_gates_rpy = np.array([[0.0, 0.0, -0.78],
                                         [0.0, 0.0, 2.35],
@@ -90,7 +90,7 @@ class StateController(Controller):
         return False
 
     def check_spline_obst_collision(self, spline, t_start, t_end, obst_index, trigger_distance=0.15):
-        t_arr = np.linspace(t_start, t_end, 40)
+        t_arr = np.linspace(t_start, t_end, 40) # 40 rule of thumb
         obst = self.nominal_obst_position[obst_index]
         
         for i in t_arr:
@@ -213,7 +213,7 @@ class StateController(Controller):
             des_pos_spline = self.compute_waypoints_sector_3(t, current_gate_index, gate_position_array, pBL, vel_vec, add_waypoint)
             feedback = self.check_spline_obst_collision(des_pos_spline, self._sector_times[3], self._sector_times[3]+self.estimated_sector_times[3], 3)
 
-        if feedback is not None:
+        if feedback is not None: # obstacle violation
             des_pos_spline = self.compute_waypoint_trajectory(t, current_gate_index, gate_position_array, pBL, vel_vec, feedback)
         return des_pos_spline
 
