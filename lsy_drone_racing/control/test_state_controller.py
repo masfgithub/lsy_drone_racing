@@ -42,7 +42,7 @@ class StateController(Controller):
         super().__init__(obs, info, config)
         self._freq = config.env.freq
         
-        self.estimated_sector_times = np.array([4.0, 2.5, 4.25, 2.5])
+        self.estimated_sector_times = np.array([3.85, 2.5, 3.5, 2.25])
 
         self.nominal_gates_rpy = np.array([[0.0, 0.0, -0.78],
                                         [0.0, 0.0, 2.35],
@@ -70,8 +70,8 @@ class StateController(Controller):
         drone_params = load_params(config.sim.physics, config.sim.drone_model)
         self.drone_mass = drone_params["mass"]
 
-        self.kp = np.array([0.5, 0.5, 1.5])
-        self.ki = np.array([0.06, 0.06, 0.06])
+        self.kp = np.array([0.55, 0.55, 1.55])
+        self.ki = np.array([0.045, 0.045, 0.05])
         self.kd = np.array([0.5, 0.5, 0.5])
         self.ki_range = np.array([2.0, 2.0, 0.4])
         self.i_error = np.zeros(3)
