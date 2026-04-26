@@ -99,6 +99,7 @@ class StateController(Controller):
         
         delta_min_norm = 200 # super high value for init
         delta_min = None
+        des_pos_violated = None
 
         for i in t_arr:
             des_pos = spline(i)
@@ -107,12 +108,13 @@ class StateController(Controller):
             if delta_norm < delta_min_norm:
                 delta_min = delta
                 delta_min_norm = delta_norm
+                des_pos_violated = des_pos
         #print(f'Minimum distance: {delta_min_norm}')
 
         if delta_min_norm < trigger_distance:
             d = (delta_min/(delta_min_norm+0.001))*trigger_distance # move trigger distance away
             adj_pos = np.array([obst[0] - d[0], obst[1] - d[1], des_pos[2]])
-            #print(f'Pos Adjusted: old pos: {des_pos}, new pos: {adj_pos}')
+            #print(f'Pos Adjusted: old pos: {des_pos_violated}, new pos: {adj_pos}, obst: {obst}, d: {d}')
             return adj_pos
         return None
 
@@ -147,7 +149,7 @@ class StateController(Controller):
         
         new_waypoints = np.array([gate_position_array[0]])
 
-        new_waypoints = np.append(new_waypoints, [[1.2, -0.15, 1.1]], axis=0)
+        new_waypoints = np.append(new_waypoints, [[1.2, 0.0, 1.1]], axis=0)
         if add_waypoint is not None:
             new_waypoints = np.append(new_waypoints, [add_waypoint], axis=0)
 
@@ -235,16 +237,6 @@ class StateController(Controller):
 
         return pTL_prev, pTL_next
 
-    def check_violated_obstacle(self, pBL, pGL_array, delta=0.2):
-        for i in range(0, len(pGL_array)):
-            pGL = pGL_array[i]
-            dGB_2D = np.linalg.norm(pGL[:2] - pBL[:2])
-
-            if dGB_2D < delta:
-                return [pGL, i]
-
-        return None
-
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
     ) -> NDArray[np.floating]:
@@ -283,15 +275,12 @@ class StateController(Controller):
             return self._prev_action
 
         dTB_2D = np.linalg.norm(pTL[:2] - pBL[:2])
-        violation = self.check_violated_obstacle(pBL, pGL_array)
 
         if (self._first_iteration or 
             (np.linalg.norm(self.nominal_gates_position[pTL_index] - pTL) > 0.01 and dTB_2D < 0.65) or 
-            (self._old_gate_index != pTL_index)): #(violation is not None)):
-        #    # compute new trajectory
-        #    #violated_obstacle = violation[0] 
-        #    #i_violated_obstacle = violation[1]
-        #    pos_des = self._des_pos_spline(t)
+            (self._old_gate_index != pTL_index) or not np.array_equal(self.nominal_obst_position, pGL_array)):
+            # compute new trajectory
+            self.nominal_obst_position = pGL_array
             new_spline = self.compute_waypoint_trajectory(t, pTL_index, pTL_array, pBL, vBLL) # TBD: calculate new trajectory once new information about the gates-position is available
             self._des_pos_spline = new_spline
             self._first_iteration = False
@@ -299,7 +288,6 @@ class StateController(Controller):
 
         action = self.PID(self._des_pos_spline, pBL, vBLL, quat, t)
         self._prev_action = action
-        #action = np.concatenate((des_pos, np.zeros(10)), dtype=np.float32)
         return action
 
     def PID(self, spline, pBL, vBLL, quat, t):
