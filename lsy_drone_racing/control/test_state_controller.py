@@ -42,7 +42,7 @@ class StateController(Controller):
         super().__init__(obs, info, config)
         self._freq = config.env.freq
         
-        self.estimated_sector_times = np.array([3.0, 2.25, 3.0, 2.0])
+        self.estimated_sector_times = np.array([3.0, 2.25, 2.75, 2.0])
 
         self.nominal_gates_rpy = np.array([[0.0, 0.0, -0.78],
                                         [0.0, 0.0, 2.35],
