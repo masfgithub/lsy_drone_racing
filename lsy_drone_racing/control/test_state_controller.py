@@ -42,7 +42,7 @@ class StateController(Controller):
         super().__init__(obs, info, config)
         self._freq = config.env.freq
         
-        self.estimated_sector_times = np.array([3.85, 2.5, 3.5, 2.25])
+        self.estimated_sector_times = np.array([3.0, 2.25, 3.0, 2.0])
 
         self.nominal_gates_rpy = np.array([[0.0, 0.0, -0.78],
                                         [0.0, 0.0, 2.35],
@@ -78,9 +78,13 @@ class StateController(Controller):
         self.g = 9.81
 
         self._prev_action = []
+        self.save_point = None
 
         self._old_gate_index = -1
         self._sector_times = np.array([0.0, 0.0, 0.0, 0.0])
+
+        self.max_rec_depth = 5
+        self.current_rec_depth = 0
 
     def is_element(self, elem, arr):
         for i in range(0, len(arr)):
@@ -89,20 +93,27 @@ class StateController(Controller):
 
         return False
 
-    def check_spline_obst_collision(self, spline, t_start, t_end, obst_index, trigger_distance=0.15):
+    def check_spline_obst_collision(self, spline, t_start, t_end, obst_index, trigger_distance=0.2):
         t_arr = np.linspace(t_start, t_end, 40) # 40 rule of thumb
         obst = self.nominal_obst_position[obst_index]
         
+        delta_min_norm = 200 # super high value for init
+        delta_min = None
+
         for i in t_arr:
             des_pos = spline(i)
             delta = obst[:2] - des_pos[:2]
             delta_norm = np.linalg.norm(delta)
-            if delta_norm < trigger_distance:
-                #print(f'Pos Adjusted')
-                d = (delta/(delta_norm+0.001))*0.2 # move 20 cm away
-                adj_pos = np.array([des_pos[0] - d[0], des_pos[1] - d[1], des_pos[2]])
+            if delta_norm < delta_min_norm:
+                delta_min = delta
+                delta_min_norm = delta_norm
+        #print(f'Minimum distance: {delta_min_norm}')
 
-                return adj_pos
+        if delta_min_norm < trigger_distance:
+            d = (delta_min/(delta_min_norm+0.001))*trigger_distance # move trigger distance away
+            adj_pos = np.array([obst[0] - d[0], obst[1] - d[1], des_pos[2]])
+            #print(f'Pos Adjusted: old pos: {des_pos}, new pos: {adj_pos}')
+            return adj_pos
         return None
 
     def compute_waypoints_sector_0(self, t, current_gate_index, gate_position_array, pBL, vel_vec, add_waypoint=None):
@@ -110,17 +121,17 @@ class StateController(Controller):
             self._sector_times[0] = t
             self._old_gate_index = current_gate_index
 
-        pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[0], self.nominal_gates_rpy[0])
+        pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[0], self.nominal_gates_rpy[0], 0.4, 0.4)
 
         new_waypoints = np.array([[-1.5, 0.75, 0.05]])
 
         if add_waypoint is not None:
             new_waypoints = np.append(new_waypoints, [add_waypoint], axis=0)
 
-        #new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
+        pGL_next[2] = gate_position_array[0][2]+0.2
+        self.save_point = pGL_next
         new_waypoints = np.append(new_waypoints, [gate_position_array[0]], axis=0)
         new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
-        new_waypoints = np.append(new_waypoints, [[1.25, 0.0, 1.0]], axis=0)
 
         t_array = np.linspace(self._sector_times[0], self._sector_times[0]+self.estimated_sector_times[0], len(new_waypoints))
         des_pos_spline = CubicSpline(t_array, new_waypoints)
@@ -135,15 +146,13 @@ class StateController(Controller):
         pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[1], self.nominal_gates_rpy[1])
         
         new_waypoints = np.array([gate_position_array[0]])
-        new_waypoints = np.append(new_waypoints, [[1.25, 0.0, 1.0]], axis=0)
 
+        new_waypoints = np.append(new_waypoints, [[1.2, -0.15, 1.1]], axis=0)
         if add_waypoint is not None:
             new_waypoints = np.append(new_waypoints, [add_waypoint], axis=0)
 
-        new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
         new_waypoints = np.append(new_waypoints, [gate_position_array[1]], axis=0)
         new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
-        new_waypoints = np.append(new_waypoints, [[0.0, 1.0, 1.0]], axis=0)
 
         t_array = np.linspace(self._sector_times[1], self._sector_times[1]+self.estimated_sector_times[1], len(new_waypoints))
         des_pos_spline = CubicSpline(t_array, new_waypoints)
@@ -162,9 +171,7 @@ class StateController(Controller):
         if add_waypoint is not None:
             new_waypoints = np.append(new_waypoints, [add_waypoint], axis=0)
 
-        new_waypoints = np.append(new_waypoints, [[0.0, 0.25, 1.0]], axis=0)
-        #new_waypoints = np.append(new_waypoints, [[-0.5, -0.05, 0.8]], axis=0)
-        new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0)
+        new_waypoints = np.append(new_waypoints, [[-0.5, -0.05, 0.8]], axis=0)
         new_waypoints = np.append(new_waypoints, [gate_position_array[2]], axis=0)
         new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
         
@@ -178,15 +185,14 @@ class StateController(Controller):
             self._sector_times[3] = t
             self._old_gate_index = current_gate_index
         
+        pGL0_prev, pGL0_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[2], self.nominal_gates_rpy[2], 0.1, 0.1)
         pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[3], self.nominal_gates_rpy[3], 0.2, 0.4)
-        
-        new_waypoints = np.array([gate_position_array[2]])
-        new_waypoints = np.append(new_waypoints, [[-0.5, -0.5, 0.8]], axis=0)
+        new_waypoints = np.array([pGL0_prev])
+        new_waypoints = np.append(new_waypoints, [[-0.5, -0.4, 0.9]], axis=0)
 
         if add_waypoint is not None:
             new_waypoints = np.append(new_waypoints, [add_waypoint], axis=0)
 
-        #new_waypoints = np.append(new_waypoints, [pGL_prev], axis=0) # seems not necessary
         new_waypoints = np.append(new_waypoints, [gate_position_array[3]], axis=0)
         new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
 
@@ -213,8 +219,11 @@ class StateController(Controller):
             des_pos_spline = self.compute_waypoints_sector_3(t, current_gate_index, gate_position_array, pBL, vel_vec, add_waypoint)
             feedback = self.check_spline_obst_collision(des_pos_spline, self._sector_times[3], self._sector_times[3]+self.estimated_sector_times[3], 3)
 
-        if feedback is not None: # obstacle violation
+        if (feedback is not None) and (self.current_rec_depth < self.max_rec_depth): # obstacle violation
+            self.current_rec_depth += 1
             des_pos_spline = self.compute_waypoint_trajectory(t, current_gate_index, gate_position_array, pBL, vel_vec, feedback)
+            self.current_rec_depth = 0
+
         return des_pos_spline
 
     def compute_prev_and_next_gate_waypoint(self, pTL, rpy, offset_prev = 0.2, offset_next = 0.4):
