@@ -44,7 +44,7 @@ class StateController(Controller):
         super().__init__(obs, info, config)
         self._freq = config.env.freq
         # reliable config [2.3, 2.5, 2.8, 1.8]
-        self.estimated_sector_times = np.array([1.7, 2.3, 2.3, 1.8])
+        self.estimated_sector_times = np.array([1.7, 2.25, 2.25, 1.7])
 
         self.nominal_gates_rpy = np.array([[0.0, 0.0, -0.78],
                                         [0.0, 0.0, 2.35],
@@ -185,10 +185,12 @@ class StateController(Controller):
         pG0L_prev, pG0L_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[1], self.nominal_gates_rpy[1], 0.1, 0.2)
         pGL_prev, pGL_next = self.compute_prev_and_next_gate_waypoint(gate_position_array[2], self.nominal_gates_rpy[2], 0.5, 0.3)
         
+        next_point = pGL_next.copy()
+        next_point[2] -= 0.1
         new_waypoints = np.array([gate_position_array[1]])
         new_waypoints = np.append(new_waypoints, [[-0.5, -0.05, 0.8]], axis=0)
         new_waypoints = np.append(new_waypoints, [gate_position_array[2]], axis=0)
-        new_waypoints = np.append(new_waypoints, [pGL_next], axis=0)
+        new_waypoints = np.append(new_waypoints, [next_point], axis=0)
         
         t_array = np.linspace(self._sector_times[2], self._sector_times[2]+self.estimated_sector_times[2], len(new_waypoints))
         des_pos_spline = CubicSpline(t_array, new_waypoints)
@@ -230,7 +232,7 @@ class StateController(Controller):
             feedback = self.check_spline_obst_collision(des_pos_spline, self._sector_times[1], self._sector_times[1]+self.estimated_sector_times[1], 1)
 
         elif self.is_element(current_gate_index, [2]):
-            self.i_error = np.zeros(3)
+            #self.i_error = np.zeros(3)
             des_pos_spline = self.compute_waypoints_sector_2(t, current_gate_index, gate_position_array, pBL, vel_vec, add_waypoint)
             feedback = self.check_spline_obst_collision(des_pos_spline, self._sector_times[2], self._sector_times[2]+self.estimated_sector_times[2], 0)
 
