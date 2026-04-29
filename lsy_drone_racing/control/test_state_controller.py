@@ -44,7 +44,7 @@ class StateController(Controller):
         super().__init__(obs, info, config)
         self._freq = config.env.freq
         # reliable config [2.3, 2.5, 2.8, 1.8]
-        self.estimated_sector_times = np.array([1.8, 2.4, 3.0, 1.8])
+        self.estimated_sector_times = np.array([1.7, 2.3, 2.8, 1.8])
 
         self.nominal_gates_rpy = np.array([[0.0, 0.0, -0.78],
                                         [0.0, 0.0, 2.35],
@@ -242,7 +242,7 @@ class StateController(Controller):
             feedback = self.check_spline_obst_collision(des_pos_spline, self._sector_times[2], self._sector_times[2]+self.estimated_sector_times[2], 0)
 
         elif self.is_element(current_gate_index, [3]):
-            self.i_error = np.zeros(3)
+            #self.i_error = np.zeros(3)
             des_pos_spline = self.compute_waypoints_sector_3(t, current_gate_index, gate_position_array, pBL, vel_vec, add_waypoint)
             feedback = self.check_spline_obst_collision(des_pos_spline, self._sector_times[3], self._sector_times[3]+self.estimated_sector_times[3], 3)
 
@@ -317,7 +317,6 @@ class StateController(Controller):
         
         if self.current_sector != pTL_index:
             self.current_sector = pTL_index
-            self.i_error = np.zeros(3)
 
         if pTL_index == -1:
             self._finished = True
