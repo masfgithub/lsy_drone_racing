@@ -1,13 +1,4 @@
-"""Controller that follows a pre-defined trajectory.
-
-It uses a cubic spline interpolation to generate a smooth trajectory through a series of waypoints.
-At each time step, the controller computes the next desired position by evaluating the spline.
-
-.. note::
-    The waypoints are hard-coded in the controller for demonstration purposes. In practice, you
-    would need to generate the splines adaptively based on the track layout, and recompute the
-    trajectory if you receive updated gate and obstacle poses.
-"""
+# Test comment
 
 from __future__ import annotations
 
