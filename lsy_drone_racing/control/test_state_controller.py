@@ -42,7 +42,7 @@ class StateController(Controller):
         super().__init__(obs, info, config)
         self._freq = config.env.freq
         # reliable config [2.3, 2.5, 2.8, 1.8]
-        self.estimated_sector_times = np.array([2.3, 2.5, 2.75, 2.0])
+        self.estimated_sector_times = np.array([2.3, 2.4, 2.5, 2.0])
 
         self.nominal_gates_rpy = np.array([[0.0, 0.0, -0.78],
                                         [0.0, 0.0, 2.35],
@@ -72,7 +72,7 @@ class StateController(Controller):
 
         self.kp_sectors = np.array([[0.6, 0.6, 1.55],
                                     [0.45, 0.45, 1.55],
-                                    [0.55, 0.55, 1.55],
+                                    [0.6, 0.6, 1.55],
                                     [0.55, 0.55, 1.55]])
         
         self.ki_sectors = np.array([[0.05, 0.05, 0.05],
@@ -160,7 +160,7 @@ class StateController(Controller):
         
         new_waypoints = np.array([gate_position_array[0]])
 
-        new_waypoints = np.append(new_waypoints, [[1.2, -0.25, 1.1]], axis=0)
+        new_waypoints = np.append(new_waypoints, [[1.2, -0.0, 1.1]], axis=0)
         if add_waypoint is not None:
             new_waypoints = np.append(new_waypoints, [add_waypoint], axis=0)
 
