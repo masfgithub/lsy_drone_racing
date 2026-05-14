@@ -1,0 +1,12 @@
+########## cost parameters ##########
+cost:
+  Q: [5, 3, 5, 3, 5, 3, 0.1, 0.1, 0.1, 1, 1, 1] #[1.0e+2, 1.0e-1, 1.0e+2, 1.0e-1, 1.0e+2, 1.0e-1, 1.0e+2, 1.0e+2, 1.0e+2, 1.0e-1, 1.0e-1, 1.0e-1]
+  R: [0.1, 0.1, 0.1, 0.1]
+
+
+########## MPC parameters ##########
+solver:
+  n_pred: 50           # prediction horizon
+  Ts: 0.05            # sampling time [s]  
+
+  solver_type: 'qrqp' #'SQP'      # 'SQP_RTI'
