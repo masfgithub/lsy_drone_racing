@@ -1,4 +1,5 @@
 """TBD: for Ruff."""
+
 import numpy as np
 import scipy
 from acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver

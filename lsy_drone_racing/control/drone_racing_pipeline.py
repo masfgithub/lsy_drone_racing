@@ -2,6 +2,7 @@
 
 TBD specify more in detail.
 """
+
 from __future__ import annotations  # Python 3.10 type hints
 
 from typing import TYPE_CHECKING
@@ -31,7 +32,7 @@ class DroneRacingPipeline(Controller):
             config: The configuration of the environment.
         """
         super().__init__(obs, info, config)
-        
+
         # variable setup
         t_total = 8
         self._tick = 0
@@ -40,7 +41,7 @@ class DroneRacingPipeline(Controller):
         # setup for planner
         self._planner = BasicPlanner(config, t_total)
         planner_dict = self._planner.plan()
-        
+
         # setup for controller
         self._controller = NMPC(obs, planner_dict, info, config, t_total)
 

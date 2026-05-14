@@ -15,14 +15,18 @@ from lsy_drone_racing.control.nmpc.nmpc_setup import create_ocp_solver
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+
 class NMPC(ControllerInterface):
     """MPC using the collective thrust and attitude interface."""
 
-    def __init__(self, obs: dict[str, NDArray[np.floating]], 
-                 planner: dict, 
-                 info: dict, 
-                 config: dict,
-                 t_total: int):
+    def __init__(
+        self,
+        obs: dict[str, NDArray[np.floating]],
+        planner: dict,
+        info: dict,
+        config: dict,
+        t_total: int,
+    ):
         """Initialize the attitude controller.
 
         Args:
@@ -159,7 +163,7 @@ class NMPC(ControllerInterface):
             TBD: for Ruff.
         """
         return
-    
+
     def get_setpoint(self) -> np.ndarray:
         """TBD: for Ruff.
 

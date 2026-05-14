@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 @dataclass
 class EnvState_t:
     """TBD: State container for environment observations."""
+
     pBLL: np.ndarray = field(
         default_factory=lambda: np.zeros(3)
     )  # position of the body in local coordinates wrt. local coordinates

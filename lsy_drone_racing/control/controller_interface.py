@@ -13,11 +13,14 @@ if TYPE_CHECKING:
 class ControllerInterface(ABC):
     """Base class for controller implementations."""
 
-    def __init__(self, obs: dict[str, NDArray[np.floating]], 
-                 planner: dict, 
-                 info: dict, 
-                 config: dict,
-                 t_total: int):
+    def __init__(
+        self,
+        obs: dict[str, NDArray[np.floating]],
+        planner: dict,
+        info: dict,
+        config: dict,
+        t_total: int,
+    ):
         """Initialization of the controller.
 
         Instructions:
@@ -31,7 +34,7 @@ class ControllerInterface(ABC):
             planner: TBD
             info: The initial environment information from the reset.
             config: The race configuration. See the config files for details. Contains additional
-        
+
                 information such as disturbance configurations, randomizations, etc.
             t_total: TBD ruff
         """
@@ -100,7 +103,7 @@ class ControllerInterface(ABC):
             TBD: for Ruff.
         """
         return
-    
+
     def get_setpoint(self) -> np.ndarray:
         """TBD: for Ruff.
 

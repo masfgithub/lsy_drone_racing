@@ -64,7 +64,7 @@ class BasicPlanner:
         self._finished = False
 
         return self.get_trajectories()
-    
+
     def get_trajectories(self) -> dict:
         """TBD: for Ruff.
 
@@ -78,9 +78,9 @@ class BasicPlanner:
             "des_pos_spline": self._des_pos_spline,
             "des_vel_spline": self._des_vel_spline,
             "waypoints_pos": self._waypoints_pos,
-            "waypoints_vel": self._waypoints_vel
+            "waypoints_vel": self._waypoints_vel,
         }
-        
+
         return planner_dict
 
     def get_pos_traj(self) -> np.ndarray:
