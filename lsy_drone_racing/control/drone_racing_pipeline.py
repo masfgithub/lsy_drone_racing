@@ -16,6 +16,7 @@ from crazyflow.sim.visualize import draw_line, draw_points
 
 from lsy_drone_racing.control.basic_planner import BasicPlanner
 from lsy_drone_racing.control.controller import Controller
+from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.nmpc.nmpc import NMPC
 
 
@@ -35,6 +36,7 @@ class DroneRacingPipeline(Controller):
 
         # variable setup
         t_total = 8
+        env_states = extract_env_states(obs) # align information with naming convention 
         self._tick = 0
         self._finished = False
 
@@ -43,7 +45,7 @@ class DroneRacingPipeline(Controller):
         planner_dict = self._planner.plan()
 
         # setup for controller
-        self._controller = NMPC(obs, planner_dict, info, config, t_total)
+        self._controller = NMPC(env_states, planner_dict, info, config, t_total)
 
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
@@ -59,8 +61,10 @@ class DroneRacingPipeline(Controller):
             The orientation as roll, pitch, yaw angles, and the collective thrust
             [r_des, p_des, y_des, t_des] as a numpy array.
         """
+        env_states = extract_env_states(obs) # align information with naming convention 
+
         self._planner.replan()
-        u0 = self._controller.control(obs, info)
+        u0 = self._controller.control(env_states, info)
         return u0
 
     def step_callback(

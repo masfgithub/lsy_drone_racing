@@ -15,13 +15,15 @@ from lsy_drone_racing.control.nmpc.nmpc_setup import create_ocp_solver
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+    from lsy_drone_racing.control.env_obs import EnvState_t
+
 
 class NMPC(ControllerInterface):
     """MPC using the collective thrust and attitude interface."""
 
     def __init__(
         self,
-        obs: dict[str, NDArray[np.floating]],
+        obs: EnvState_t,
         planner: dict,
         info: dict,
         config: dict,
@@ -62,7 +64,7 @@ class NMPC(ControllerInterface):
         self._finished = False
 
     def control(
-        self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
+        self, obs: EnvState_t, info: dict | None = None
     ) -> NDArray[np.floating]:
         """Compute the next desired collective thrust and roll/pitch/yaw of the drone.
 
@@ -80,9 +82,9 @@ class NMPC(ControllerInterface):
             self._finished = True
 
         # Setting initial state
-        obs["rpy"] = R.from_quat(obs["quat"]).as_euler("xyz")
-        obs["drpy"] = ang_vel2rpy_rates(obs["quat"], obs["ang_vel"])
-        x0 = np.concatenate((obs["pos"], obs["rpy"], obs["vel"], obs["drpy"]))
+        rpy = R.from_quat(obs.qBLB).as_euler("xyz")
+        drpy = ang_vel2rpy_rates(obs.qBLB, obs.wBLL)
+        x0 = np.concatenate((obs.pBLL, rpy, obs.vBLL, drpy))
         self._acados_ocp_solver.set(0, "lbx", x0)
         self._acados_ocp_solver.set(0, "ubx", x0)
 

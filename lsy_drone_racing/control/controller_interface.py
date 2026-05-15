@@ -9,13 +9,15 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
+    from lsy_drone_racing.control.env_obs import EnvState_t
+
 
 class ControllerInterface(ABC):
     """Base class for controller implementations."""
 
     def __init__(
         self,
-        obs: dict[str, NDArray[np.floating]],
+        obs: EnvState_t,
         planner: dict,
         info: dict,
         config: dict,
@@ -41,7 +43,7 @@ class ControllerInterface(ABC):
 
     @abstractmethod
     def control(
-        self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
+        self, obs: EnvState_t, info: dict | None = None
     ) -> NDArray[np.floating]:
         """Compute the next desired state of the drone.
 
