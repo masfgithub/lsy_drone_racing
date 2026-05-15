@@ -21,14 +21,7 @@ if TYPE_CHECKING:
 class NMPC(ControllerInterface):
     """MPC using the collective thrust and attitude interface."""
 
-    def __init__(
-        self,
-        obs: EnvState_t,
-        planner: dict,
-        info: dict,
-        config: dict,
-        t_total: int,
-    ):
+    def __init__(self, obs: EnvState_t, planner: dict, info: dict, config: dict, t_total: int):
         """Initialize the attitude controller.
 
         Args:
@@ -63,9 +56,7 @@ class NMPC(ControllerInterface):
         self._config = config
         self._finished = False
 
-    def control(
-        self, obs: EnvState_t, info: dict | None = None
-    ) -> NDArray[np.floating]:
+    def control(self, obs: EnvState_t, info: dict | None = None) -> NDArray[np.floating]:
         """Compute the next desired collective thrust and roll/pitch/yaw of the drone.
 
         Args:

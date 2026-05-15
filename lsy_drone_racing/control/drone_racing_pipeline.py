@@ -36,7 +36,7 @@ class DroneRacingPipeline(Controller):
 
         # variable setup
         t_total = 8
-        env_states = extract_env_states(obs) # align information with naming convention 
+        env_states = extract_env_states(obs)  # align information with naming convention
         self._tick = 0
         self._finished = False
 
@@ -61,7 +61,7 @@ class DroneRacingPipeline(Controller):
             The orientation as roll, pitch, yaw angles, and the collective thrust
             [r_des, p_des, y_des, t_des] as a numpy array.
         """
-        env_states = extract_env_states(obs) # align information with naming convention 
+        env_states = extract_env_states(obs)  # align information with naming convention
 
         self._planner.replan()
         u0 = self._controller.control(env_states, info)

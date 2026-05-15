@@ -15,14 +15,7 @@ if TYPE_CHECKING:
 class ControllerInterface(ABC):
     """Base class for controller implementations."""
 
-    def __init__(
-        self,
-        obs: EnvState_t,
-        planner: dict,
-        info: dict,
-        config: dict,
-        t_total: int,
-    ):
+    def __init__(self, obs: EnvState_t, planner: dict, info: dict, config: dict, t_total: int):
         """Initialization of the controller.
 
         Instructions:
@@ -42,9 +35,7 @@ class ControllerInterface(ABC):
         """
 
     @abstractmethod
-    def control(
-        self, obs: EnvState_t, info: dict | None = None
-    ) -> NDArray[np.floating]:
+    def control(self, obs: EnvState_t, info: dict | None = None) -> NDArray[np.floating]:
         """Compute the next desired state of the drone.
 
         Instructions:
