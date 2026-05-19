@@ -1,4 +1,4 @@
-"""Obstacle-avoidance NMPC example utilities.
+"""Obstacle-avoidance (3D) NMPC example utilities.
 
 Provides functions to build an acados OCP with obstacle avoidance
 constraints and to plot results.
@@ -146,23 +146,12 @@ def plot_results(
         # Dashed boundary
         ax.add_patch(
             plt.Circle(
-                obs,
-                d_min,
-                color="tab:red",
-                fill=False,
-                linewidth=1.5,
-                linestyle="--",
-                zorder=3,
+                obs, d_min, color="tab:red", fill=False, linewidth=1.5, linestyle="--", zorder=3
             )
         )
         ax.plot(*obs, "r+", markersize=9, markeredgewidth=2, zorder=4)
         ax.annotate(
-            f"obs {i}",
-            obs,
-            textcoords="offset points",
-            xytext=(6, 4),
-            fontsize=8,
-            color="tab:red",
+            f"obs {i}", obs, textcoords="offset points", xytext=(6, 4), fontsize=8, color="tab:red"
         )
 
     # Trajectory with colour gradient (early = light, late = dark)
@@ -221,6 +210,7 @@ def plot_results(
 
     plt.tight_layout()
     plt.show()
+
 
 if __name__ == "__main__":
     obstacles = np.array([[2.0, 1.5], [4.0, 3.0], [4.0, 1.5], [4.0, 0.0], [6.0, 1.0], [7.0, 2.5]])
