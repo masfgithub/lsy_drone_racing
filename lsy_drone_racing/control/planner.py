@@ -12,20 +12,19 @@ DEFAULT_MAX_SPEED = 12.0  # m/s
 
 class PlanningError(Exception):
     """Raised when a planner cannot produce a valid trajectory."""
+    pass
 
 
 @dataclass
 class Trajectory:
-    """Output of every planner: sampled positions, velocities and times."""
-    positions: np.ndarray   # shape (N, 3)
-    velocities: np.ndarray  # shape (N, 3)
-    timestamps: np.ndarray  # shape (N,)
+    positions: np.ndarray
+    velocities: np.ndarray
+    timestamps: np.ndarray
 
 
 class Planner(ABC):
-    """Abstract base class for all trajectory planners."""
-
     @abstractmethod
-    def plan(self, start_state, gates, goal_state) -> Trajectory:
+    def plan(self, start_state, gates, obstacles) -> Trajectory:
         """Compute a trajectory through the gates. Subclasses must implement."""
         ...
+
