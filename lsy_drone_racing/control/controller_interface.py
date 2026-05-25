@@ -97,6 +97,17 @@ class ControllerInterface(ABC):
         """
         return
 
+    def get_predicted_traj(self):
+        """TBD: for Ruff.
+
+        Args:
+            TBD: for Ruff.
+
+        Returns:
+            TBD: for Ruff.
+        """
+        return
+
     def get_setpoint(self) -> np.ndarray:
         """TBD: for Ruff.
 

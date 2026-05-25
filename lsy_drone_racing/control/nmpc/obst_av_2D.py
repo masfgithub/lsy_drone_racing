@@ -7,7 +7,7 @@ constraints and to plot results.
 import matplotlib.pyplot as plt
 import numpy as np
 from acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
-from casadi import SX, sumsqr, vertcat
+from casadi import MX, sumsqr, vertcat
 
 
 def create_obstacle_avoidance_mpc(pos_indices: list, obst: np.ndarray, d_min: float) -> tuple:
@@ -22,8 +22,8 @@ def create_obstacle_avoidance_mpc(pos_indices: list, obst: np.ndarray, d_min: fl
 
     n_x = len(pos_indices) + 2  # [px, py, vx, vy]
     n_u = 2  # [ax, ay]
-    x = SX.sym("x", n_x)
-    u = SX.sym("u", n_u)
+    x = MX.sym("x", n_x)
+    u = MX.sym("u", n_u)
 
     vx, vy = x[2], x[3]
     ax, ay = u[0], u[1]
@@ -38,7 +38,7 @@ def create_obstacle_avoidance_mpc(pos_indices: list, obst: np.ndarray, d_min: fl
 
     h_list = []
     for i in range(n_obst):
-        obst_i = SX(obst[i])
+        obst_i = MX(obst[i])
         diff = pos - obst_i
         dist = np.sqrt(sumsqr(diff))
         h_list.append(dist)

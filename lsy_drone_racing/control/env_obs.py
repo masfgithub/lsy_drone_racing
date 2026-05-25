@@ -32,8 +32,8 @@ class EnvState_t:
     qTLT_array: np.ndarray = field(
         default_factory=lambda: np.zeros((4, 6), dtype=np.float64)
     )  # array of quaternions of the targets from local frame to target coordinates
-    pOLL: np.ndarray = field(
-        default_factory=lambda: np.zeros(3)
+    pOLL_array: np.ndarray = field(
+        default_factory=lambda: np.zeros((4, 3), dtype=np.float64)
     )  # array of positions of the obstacles in local coordinates wrt. local coordinates
     hT: float = 0.3  # height of the targets (usually it is a constant)
     lT: float = 0.3  # length of the targets (usually it is a constant)
@@ -50,7 +50,7 @@ def extract_env_states(obs: dict[str, NDArray[np.floating]]) -> EnvState_t:
     states.pTLL_array = obs["gates_pos"]
     states.pTLL_index = obs["target_gate"]
     states.qTLT_array = obs["gates_quat"]
-    states.pOLL = obs["obstacles_pos"]
+    states.pOLL_array = obs["obstacles_pos"]
     states.hT = 0.3  # for now 30 cm, TBD: adjust
     states.lT = 0.3  # for now 30 cm, TBD: adjust
     states.wT = 0.02  # for now 2 cm, TBD: adjust

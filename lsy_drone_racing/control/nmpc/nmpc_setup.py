@@ -5,6 +5,10 @@ import scipy
 from acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
 from drone_models.so_rpy import symbolic_dynamics_euler
 
+from lsy_drone_racing.control.nmpc.env_constraints import create_env_constraints
+from lsy_drone_racing.control.nmpc.obstacle import CylinderObstacle
+from lsy_drone_racing.control.nmpc.window import Window
+
 
 def create_acados_model(parameters: dict) -> AcadosModel:
     """Creates an acados model from a symbolic drone_model."""
@@ -33,7 +37,12 @@ def create_acados_model(parameters: dict) -> AcadosModel:
 
 
 def create_ocp_solver(
-    Tf: float, N: int, parameters: dict, verbose: bool = False
+    Tf: float,
+    N: int,
+    parameters: dict,
+    gates: list[Window],
+    obstacles: list[CylinderObstacle],
+    verbose: bool = False,
 ) -> tuple[AcadosOcpSolver, AcadosOcp]:
     """Creates an acados Optimal Control Problem and Solver."""
     ocp = AcadosOcp()
@@ -69,25 +78,41 @@ def create_ocp_solver(
             1.0,  # rpy
             1.0,  # rpy
             1.0,  # rpy
-            10.0,  # vel
-            10.0,  # vel
-            10.0,  # vel
+            5.0,  # vel
+            5.0,  # vel
+            5.0,  # vel
             5.0,  # drpy
             5.0,  # drpy
             5.0,  # drpy
         ]
     )
-    # Input weights (reference is upright orientation and hover thrust)
-    R = np.diag(
+    Q_e = np.diag(
         [
-            1.0,  # rpy
-            1.0,  # rpy
-            1.0,  # rpy
-            50.0,  # thrust
+            100.0,  # pos
+            100.0,  # pos
+            100.0,  # pos
+            0.1,  # rpy
+            0.1,  # rpy
+            0.1,  # rpy
+            0.1,  # vel
+            0.1,  # vel
+            0.1,  # vel
+            0.1,  # drpy
+            0.1,  # drpy
+            0.1,  # drpy
         ]
     )
 
-    Q_e = Q.copy()
+    # Input weights (reference is upright orientation and hover thrust)
+    R = np.diag(
+        [
+            0.1,  # rpy
+            0.1,  # rpy
+            0.1,  # rpy
+            0.1,  # thrust
+        ]
+    )
+
     ocp.cost.W = scipy.linalg.block_diag(Q, R)
     ocp.cost.W_e = Q_e
 
@@ -116,6 +141,15 @@ def create_ocp_solver(
     ocp.constraints.ubu = np.array([0.5, 0.5, 0.5, parameters["thrust_max"] * 4])
     ocp.constraints.idxbu = np.array([0, 1, 2, 3])
 
+    # Set environmental constraints
+    pBLL = ocp.model.x[:3]
+    env = create_env_constraints(model=ocp.model, pBLL=pBLL, gates=gates, obstacles=obstacles)
+    ocp.constraints.lh = env["lh"]
+    ocp.constraints.uh = env["uh"]
+    ocp.constraints.lh_e = env["lh"]
+    ocp.constraints.uh_e = env["uh"]
+    ocp.parameter_values = env["p0"]
+
     # We have to set x0 even though we will overwrite it later on.
     ocp.constraints.x0 = np.zeros((nx))
 
@@ -124,7 +158,10 @@ def create_ocp_solver(
     ocp.solver_options.hessian_approx = "GAUSS_NEWTON"
     ocp.solver_options.integrator_type = "ERK"
     ocp.solver_options.nlp_solver_type = "SQP"  # SQP, SQP_RTI
-    ocp.solver_options.tol = 1e-6
+    ocp.solver_options.nlp_solver_tol_stat = 1e-3
+    ocp.solver_options.nlp_solver_tol_eq = 1e-3
+    ocp.solver_options.nlp_solver_tol_ineq = 1e-3
+    ocp.solver_options.nlp_solver_tol_comp = 1e-3
 
     ocp.solver_options.qp_solver_cond_N = N
     ocp.solver_options.qp_solver_warm_start = 1

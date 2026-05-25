@@ -7,17 +7,94 @@ from __future__ import annotations  # Python 3.10 type hints
 
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import numpy as np
-    from crazyflow import Sim
-    from numpy.typing import NDArray
-
-from crazyflow.sim.visualize import draw_line, draw_points
+import numpy as np
+from crazyflow.sim.visualize import draw_capsule, draw_line, draw_points
 
 from lsy_drone_racing.control.basic_planner import BasicPlanner
 from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.nmpc.nmpc import NMPC
+
+if TYPE_CHECKING:
+    from crazyflow import Sim
+    from numpy.typing import NDArray
+
+
+def _draw_gate(
+    sim: Sim,
+    position: NDArray,
+    quaternion: NDArray,
+    total_length: float,
+    total_height: float,
+    hole_width: float,
+    hole_height: float,
+    rgba: NDArray | None = None,
+    radius: float = 0.02,
+):
+    """Draw a gate (window frame) as eight capsules in the simulation."""
+    if sim.viewer is None:
+        return
+
+    if rgba is None:
+        rgba = np.array([0.0, 0.5, 1.0, 1.0])
+
+    qw, qx, qy, qz = quaternion / np.linalg.norm(quaternion)
+    R_mat = np.array(
+        [
+            [1 - 2 * (qy**2 + qz**2), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+            [2 * (qx * qy + qz * qw), 1 - 2 * (qx**2 + qz**2), 2 * (qy * qz - qx * qw)],
+            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx**2 + qy**2)],
+        ]
+    )
+
+    def to_world(local_vec: list) -> np.ndarray:
+        return position + R_mat @ np.asarray(local_vec)
+
+    hl = total_length / 2.0
+    hh = total_height / 2.0
+    hw = hole_width / 2.0
+    hho = hole_height / 2.0
+
+    otl = np.array([0.0, -hl, hh])
+    otr = np.array([0.0, hl, hh])
+    obl = np.array([0.0, -hl, -hh])
+    obr = np.array([0.0, hl, -hh])
+    tl = np.array([0.0, -hw, hho])
+    tr = np.array([0.0, hw, hho])
+    bl = np.array([0.0, -hw, -hho])
+    br = np.array([0.0, hw, -hho])
+
+    draw_capsule(sim, to_world(otl), to_world(obl), radius=radius, rgba=rgba, cylinder=True)
+    draw_capsule(sim, to_world(otr), to_world(obr), radius=radius, rgba=rgba, cylinder=True)
+    draw_capsule(sim, to_world(otl), to_world(otr), radius=radius, rgba=rgba, cylinder=True)
+    draw_capsule(sim, to_world(obl), to_world(obr), radius=radius, rgba=rgba, cylinder=True)
+    draw_capsule(sim, to_world(tl), to_world(tr), radius=radius, rgba=rgba, cylinder=True)
+    draw_capsule(sim, to_world(bl), to_world(br), radius=radius, rgba=rgba, cylinder=True)
+    draw_capsule(sim, to_world(tl), to_world(bl), radius=radius, rgba=rgba, cylinder=True)
+    draw_capsule(sim, to_world(tr), to_world(br), radius=radius, rgba=rgba, cylinder=True)
+
+
+def _draw_cylinder_obstacle(
+    sim: Sim, position: NDArray, height: float, radius: float, rgba: NDArray | None = None
+):
+    """Draw a vertical cylinder obstacle as a single capsule in the simulation."""
+    if sim.viewer is None:
+        return
+
+    if rgba is None:
+        rgba = np.array([1.0, 0.2, 0.2, 0.8])
+
+    pos = np.asarray(position)
+    z_base = float(pos[2]) if len(pos) == 3 else 0.0
+    cx, cy = float(pos[0]), float(pos[1])
+    draw_capsule(
+        sim,
+        np.array([cx, cy, z_base]),
+        np.array([cx, cy, z_base + height]),
+        radius=radius,
+        rgba=rgba,
+        cylinder=True,
+    )
 
 
 class DroneRacingPipeline(Controller):
@@ -87,8 +164,31 @@ class DroneRacingPipeline(Controller):
         self._controller.set_tick(self._tick)
 
     def render_callback(self, sim: Sim):
-        """Visualize the desired trajectory and the current setpoint."""
+        """Visualize the desired trajectory, setpoint, gates and obstacles."""
         setpoint = self._controller.get_setpoint().reshape(1, -1)
         draw_points(sim, setpoint, rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
         trajectory = self._planner.get_pos_traj()
         draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
+        trajectory = self._controller.get_predicted_traj()
+        draw_line(sim, trajectory, rgba=np.array([0.58, 0.0, 0.83, 1.0]))
+
+        for gate in self._controller._gates:
+            _draw_gate(
+                sim,
+                position=gate.position,
+                quaternion=gate.quaternion,
+                total_length=gate.total_length,
+                total_height=gate.total_height,
+                hole_width=gate.hole_width,
+                hole_height=gate.hole_height,
+                rgba=np.array([0.0, 0.5, 1.0, 1.0]),
+            )
+
+        for obs in self._controller._obstacles:
+            _draw_cylinder_obstacle(
+                sim,
+                position=obs.position,
+                height=obs.total_height,
+                radius=obs.d_min,
+                rgba=np.array([1.0, 0.2, 0.2, 0.8]),
+            )
