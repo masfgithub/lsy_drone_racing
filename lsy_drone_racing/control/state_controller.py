@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+
+import time
 from scipy.spatial.transform import Rotation
 
 from lsy_drone_racing.control import Controller
@@ -16,7 +18,6 @@ if TYPE_CHECKING:
 
 
 class _StartState:
-    """Minimal start-state object: what PointMassPlanner.plan() expects."""
     def __init__(self, position: np.ndarray, velocity: np.ndarray) -> None:
         self.position = position
         self.velocity = velocity
@@ -34,6 +35,7 @@ class StateController(Controller):
 
         # max_speed kept low on purpose: the point-mass optimum is far too
         # aggressive for the real drone to track. Raise this gradually.
+
         self._planner = PointMassPlanner(max_speed=2.0)
 
         gates = [
@@ -44,22 +46,22 @@ class StateController(Controller):
             position=np.asarray(obs["pos"], dtype=float).reshape(3),
             velocity=np.asarray(obs["vel"], dtype=float).reshape(3),
         )
-
+        now = time.time()  # seconds since epoch (Unix timestamp)
         self._trajectory = self._planner.plan(start, gates, None)
+        after = time.time()
+        print(after - now)
         self._t_total = float(self._trajectory.timestamps[-1])
         print(f"planned trajectory: {len(self._trajectory.positions)} "
               f"samples, total time {self._t_total:.3f} s")
 
     @staticmethod
     def _gate_from_obs(position, quat_xyzw) -> _Gate:
-        """Convert one sim gate (position + quaternion) into a planner _Gate."""
         forward = Rotation.from_quat(quat_xyzw).apply([1.0, 0.0, 0.0])
         yaw = float(np.arctan2(forward[1], forward[0]))
         return _Gate(position=np.asarray(position, dtype=float).reshape(3),
                      yaw=yaw)
 
     def compute_control(self, obs, info=None) -> NDArray[np.floating]:
-        """Sample the planned trajectory at the current time."""
         t = self._tick / self._freq
         if t >= self._t_total:
             self._finished = True
