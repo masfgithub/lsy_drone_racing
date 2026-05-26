@@ -50,6 +50,7 @@ class StateController(Controller):
         self._trajectory = self._planner.plan(start, gates, None)
         after = time.time()
         print(after - now)
+        print(self._trajectory.timestamps[-1])
         self._t_total = float(self._trajectory.timestamps[-1])
         print(f"planned trajectory: {len(self._trajectory.positions)} "
               f"samples, total time {self._t_total:.3f} s")
@@ -62,7 +63,7 @@ class StateController(Controller):
                      yaw=yaw)
 
     def compute_control(self, obs, info=None) -> NDArray[np.floating]:
-        t = self._tick / self._freq
+        t = 0.5*self._tick / self._freq
         if t >= self._t_total:
             self._finished = True
 
@@ -90,7 +91,7 @@ class StateController(Controller):
         draw_line(sim, traj.positions, rgba=(0.0, 1.0, 0.0, 1.0))
 
         idx = int(np.searchsorted(traj.timestamps,
-                                  self._tick / self._freq))
+                                  0.1*self._tick / self._freq))# hier self tick veraendern
         idx = min(idx, len(traj.positions) - 1)
         setpoint = traj.positions[idx].reshape(1, -1)
         draw_points(sim, setpoint, rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
