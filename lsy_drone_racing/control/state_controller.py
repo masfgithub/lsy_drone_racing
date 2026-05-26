@@ -22,9 +22,7 @@ class _StartState:
         self.position = position
         self.velocity = velocity
 
-
 class StateController(Controller):
-    """State controller following a planned point-mass trajectory."""
 
     def __init__(self, obs: dict[str, NDArray[np.floating]], info: dict,
                  config: dict):
@@ -63,7 +61,23 @@ class StateController(Controller):
                      yaw=yaw)
 
     def compute_control(self, obs, info=None) -> NDArray[np.floating]:
+        self._planner = PointMassPlanner(max_speed=2.0)
+
+        gates = [
+            self._gate_from_obs(obs["gates_pos"][i], obs["gates_quat"][i])
+            for i in range(len(obs["gates_pos"]))
+        ]
+        start = _StartState(
+            position=np.asarray(obs["pos"], dtype=float).reshape(3),
+            velocity=np.asarray(obs["vel"], dtype=float).reshape(3),
+        )
+        now = time.time()
         t = self._tick / self._freq
+        t_total = 12
+        time_left = t_total - t
+        gate_idx = obs['target_gate']
+        self._trajectory = self._planner.plan(start, gates[gate_idx:], None, time_left)
+        
         if t >= self._t_total:
             self._finished = True
 
