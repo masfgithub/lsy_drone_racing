@@ -262,18 +262,18 @@ class PointMassPlanner(Planner):
         yaw = float(np.arctan2(forward[1], forward[0]))
         return _Gate(position=np.asarray(position, dtype=float), yaw=yaw)
     
-    # adjust alpha to match the axis times and construct ttrajectory with the lowest cost sample
+    # adjust alpha to match the axis times and construct trajectory with the lowest cost sample
     def _build_trajectory(self, path: list[_Node],
-                          samples_per_segment: int = 20) -> Trajectory:
-        
+                        samples_per_segment: int = 20,
+                        total_time: float = 12.0,
+                        base_weight: float = 1.0,
+                        angle_weight: float = 4.0) -> Trajectory:
         u = self.max_acceleration
         u_acc = np.full(3, +u)
         u_brake = np.full(3, -u)
 
         all_pos: list[np.ndarray] = []
         all_vel: list[np.ndarray] = []
-        all_time: list[float] = []
-        clock = 0.0
 
         for seg in range(len(path) - 1):
             node_a, node_b = path[seg], path[seg + 1]
@@ -285,8 +285,7 @@ class PointMassPlanner(Planner):
             seg_time = max(ax.t1 + ax.t2 for ax in axes)
 
             last = (seg == len(path) - 2)
-            ts = np.linspace(0.0, seg_time, samples_per_segment,
-                             endpoint=last)
+            ts = np.linspace(0.0, seg_time, samples_per_segment, endpoint=last)
             for t in ts:
                 pos = np.empty(3)
                 vel = np.empty(3)
@@ -296,13 +295,37 @@ class PointMassPlanner(Planner):
                         node_a.velocity[i], t)
                 all_pos.append(pos)
                 all_vel.append(vel)
-                all_time.append(clock + t)
-            clock += seg_time
+
+        positions = np.array(all_pos)
+        velocities = np.array(all_vel)
+        n = len(positions)
+
+        angles = np.zeros(n)
+        for i in range(1, n - 1):
+            v_in = positions[i] - positions[i - 1]
+            v_out = positions[i + 1] - positions[i]
+            n_in = np.linalg.norm(v_in)
+            n_out = np.linalg.norm(v_out)
+            if n_in < 1e-9 or n_out < 1e-9:
+                angles[i] = 0.0
+                continue
+            cos_a = np.dot(v_in, v_out) / (n_in * n_out)
+            cos_a = np.clip(cos_a, -1.0, 1.0)  # guard against fp drift
+            angles[i] = np.arccos(cos_a)
+
+        angles[0] = angles[1] if n > 1 else 0.0
+        angles[-1] = angles[-2] if n > 1 else 0.0
+
+        weights = base_weight + angle_weight * angles
+        dt = weights / weights.sum() * total_time
+
+        # cumulative sum -> timestamps, starting at 0
+        timestamps = np.concatenate(([0.0], np.cumsum(dt)[:-1]))
 
         return Trajectory(
-            positions=np.array(all_pos),
-            velocities=np.array(all_vel),
-            timestamps=np.array(all_time),
+            positions=positions,
+            velocities=velocities,
+            timestamps=timestamps,
         )
 
     @staticmethod

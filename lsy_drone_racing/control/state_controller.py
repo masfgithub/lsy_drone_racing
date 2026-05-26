@@ -63,7 +63,7 @@ class StateController(Controller):
                      yaw=yaw)
 
     def compute_control(self, obs, info=None) -> NDArray[np.floating]:
-        t = 0.5*self._tick / self._freq
+        t = self._tick / self._freq
         if t >= self._t_total:
             self._finished = True
 
@@ -91,7 +91,7 @@ class StateController(Controller):
         draw_line(sim, traj.positions, rgba=(0.0, 1.0, 0.0, 1.0))
 
         idx = int(np.searchsorted(traj.timestamps,
-                                  0.1*self._tick / self._freq))# hier self tick veraendern
+                                  self._tick / self._freq))# hier self tick veraendern
         idx = min(idx, len(traj.positions) - 1)
         setpoint = traj.positions[idx].reshape(1, -1)
         draw_points(sim, setpoint, rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
