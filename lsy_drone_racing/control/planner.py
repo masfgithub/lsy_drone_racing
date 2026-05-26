@@ -27,4 +27,3 @@ class Planner(ABC):
     def plan(self, start_state, gates, obstacles) -> Trajectory:
         """Compute a trajectory through the gates. Subclasses must implement."""
         ...
-
