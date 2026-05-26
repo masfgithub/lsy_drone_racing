@@ -56,7 +56,8 @@ class PointMassPlanner(Planner):
         return (self.thrust_to_weight - 1.0) * GRAVITY
 
     # Planner to be called in control
-    def plan(self, start_state, gates, obstacles) -> Trajectory:
+    def plan(self, start_state, gates, obstacles,
+         total_time: float = 12.0) -> Trajectory:
         if len(gates) == 0:
             raise PlanningError("cannot plan a trajectory with no gates")
 
@@ -69,7 +70,7 @@ class PointMassPlanner(Planner):
         columns = self._build_graph(start_node, gate_objs)
         path = self._shortest_path(columns)
 
-        return self._build_trajectory(path)
+        return self._build_trajectory(path, total_time=total_time)
 
     def reset(self) -> None:
         """Clear cached state between runs."""
@@ -264,10 +265,10 @@ class PointMassPlanner(Planner):
     
     # adjust alpha to match the axis times and construct trajectory with the lowest cost sample
     def _build_trajectory(self, path: list[_Node],
-                        samples_per_segment: int = 20,
-                        total_time: float = 12.0,
-                        base_weight: float = 1.0,
-                        angle_weight: float = 4.0) -> Trajectory:
+                            total_time: float = 12.0,
+                            samples_per_segment: int = 20,
+                            base_weight: float = 1.0,
+                            angle_weight: float = 4.0) -> Trajectory:
         u = self.max_acceleration
         u_acc = np.full(3, +u)
         u_brake = np.full(3, -u)
