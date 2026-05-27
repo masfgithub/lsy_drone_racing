@@ -14,6 +14,7 @@ from lsy_drone_racing.control.basic_planner import BasicPlanner
 from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.nmpc.nmpc import NMPC
+from lsy_drone_racing.control.PointMassPlanner import PointMassPlanner
 
 if TYPE_CHECKING:
     from crazyflow import Sim
@@ -118,8 +119,10 @@ class DroneRacingPipeline(Controller):
         self._finished = False
 
         # setup for planner
-        self._planner = BasicPlanner(config, t_total)
-        planner_dict = self._planner.plan()
+        # self._planner = BasicPlanner(config, t_total)
+        self._planner = PointMassPlanner(env_states, info, config, t_total)
+        
+        planner_dict = self._planner.plan(env_states)
 
         # setup for controller
         self._controller = NMPC(env_states, planner_dict, info, config, t_total)
@@ -140,7 +143,7 @@ class DroneRacingPipeline(Controller):
         """
         env_states = extract_env_states(obs)  # align information with naming convention
 
-        self._planner.replan()
+        # self._planner.replan()
         u0 = self._controller.control(env_states, info)
         return u0
 

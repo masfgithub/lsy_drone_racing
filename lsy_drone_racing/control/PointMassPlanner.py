@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import NamedTuple
+from scipy.spatial.transform import Rotation as R
+from lsy_drone_racing.control.env_obs import EnvState_t
 
 import numpy as np
 from lsy_drone_racing.control.planner import (
@@ -39,9 +41,9 @@ class _Gate:
 
 class PointMassPlanner(Planner):
     # Constructor
-    def __init__(self, mass: float = DEFAULT_MASS,
+    def __init__(self, obs: EnvState_t, info: dict, config: dict, t_total: int,  mass: float = DEFAULT_MASS,
                  thrust_to_weight: float = DEFAULT_THRUST_TO_WEIGHT,
-                 max_speed: float = DEFAULT_MAX_SPEED,
+                 max_speed: float = 2.0,
                  samples_per_gate: int = 27) -> None:
         super().__init__()
         self.mass = mass
@@ -49,6 +51,7 @@ class PointMassPlanner(Planner):
         self.max_speed = max_speed
         self.samples_per_gate = samples_per_gate
         self._last_trajectory: Trajectory | None = None
+        self.t_total = t_total
 
     @property
     def max_acceleration(self) -> float:
@@ -56,21 +59,18 @@ class PointMassPlanner(Planner):
         return (self.thrust_to_weight - 1.0) * GRAVITY
 
     # Planner to be called in control
-    def plan(self, start_state, gates, obstacles,
-         total_time: float = 12.0) -> Trajectory:
-        if len(gates) == 0:
-            raise PlanningError("cannot plan a trajectory with no gates")
+    def plan(self, obs: EnvState_t, info: dict | None = None) -> Trajectory:
 
-        start_node = _Node(gate_index=-1,
-                        position=np.asarray(start_state.position),
-                        velocity=np.asarray(start_state.velocity))
-        gate_objs = [_Gate(position=np.asarray(g.position), yaw=g.yaw)
-                    for g in gates]
+        gate_objs = []
+        for i in range(len(obs.qTLT_array)):
+            gate_objs.append(_Gate(obs.pTLL_array[i], R.from_quat(obs.qTLT_array[i]).as_euler("xyz")[2]))
+
+        start_node = _Node(obs.pTLL_index, obs.pBLL, obs.vBLL)
 
         columns = self._build_graph(start_node, gate_objs)
         path = self._shortest_path(columns)
 
-        return self._build_trajectory(path, total_time=total_time)
+        return self._build_trajectory(path, self.t_total)
 
     def reset(self) -> None:
         """Clear cached state between runs."""
@@ -254,25 +254,23 @@ class PointMassPlanner(Planner):
             c -= 1
         path.reverse()
         return path
-
-    # transform quat coordinates to yaw of the gate
-    def _gate_from_sim(position: np.ndarray, quat_xyzw: np.ndarray) -> _Gate:
-        
-        from scipy.spatial.transform import Rotation
-        forward = Rotation.from_quat(quat_xyzw).apply([1.0, 0.0, 0.0])
-        yaw = float(np.arctan2(forward[1], forward[0]))
-        return _Gate(position=np.asarray(position, dtype=float), yaw=yaw)
     
     # adjust alpha to match the axis times and construct trajectory with the lowest cost sample
     def _build_trajectory(self, path: list[_Node],
-                            total_time: float = 12.0,
-                            samples_per_segment: int = 20,
-                            base_weight: float = 1.0,
-                            angle_weight: float = 4.0) -> Trajectory:
+                        total_time: float,
+                        samples_per_segment: int = 20,
+                        base_weight: float = 1.0,
+                        angle_weight: float = 4.0) -> dict:
+        """Build a curvature-weighted trajectory and return a dict with
+        splines and dense waypoints.
+        """
+        from scipy.interpolate import CubicSpline
+
         u = self.max_acceleration
         u_acc = np.full(3, +u)
         u_brake = np.full(3, -u)
 
+        # --- 1. Dense geometry sampling (positions + velocities from bang-bang) ---
         all_pos: list[np.ndarray] = []
         all_vel: list[np.ndarray] = []
 
@@ -301,6 +299,7 @@ class PointMassPlanner(Planner):
         velocities = np.array(all_vel)
         n = len(positions)
 
+        # --- 2. Curvature-weighted timing ---
         angles = np.zeros(n)
         for i in range(1, n - 1):
             v_in = positions[i] - positions[i - 1]
@@ -308,26 +307,44 @@ class PointMassPlanner(Planner):
             n_in = np.linalg.norm(v_in)
             n_out = np.linalg.norm(v_out)
             if n_in < 1e-9 or n_out < 1e-9:
-                angles[i] = 0.0
                 continue
-            cos_a = np.dot(v_in, v_out) / (n_in * n_out)
-            cos_a = np.clip(cos_a, -1.0, 1.0)  # guard against fp drift
+            cos_a = np.clip(np.dot(v_in, v_out) / (n_in * n_out), -1.0, 1.0)
             angles[i] = np.arccos(cos_a)
-
-        angles[0] = angles[1] if n > 1 else 0.0
-        angles[-1] = angles[-2] if n > 1 else 0.0
+        if n > 1:
+            angles[0] = angles[1]
+            angles[-1] = angles[-2]
 
         weights = base_weight + angle_weight * angles
         dt = weights / weights.sum() * total_time
-
-        # cumulative sum -> timestamps, starting at 0
         timestamps = np.concatenate(([0.0], np.cumsum(dt)[:-1]))
 
-        return Trajectory(
-            positions=positions,
-            velocities=velocities,
-            timestamps=timestamps,
-        )
+        # CubicSpline needs strictly increasing x; nudge any duplicates
+        eps = 1e-9
+        for i in range(1, len(timestamps)):
+            if timestamps[i] <= timestamps[i - 1]:
+                timestamps[i] = timestamps[i - 1] + eps
+
+        # --- 3. Build cubic splines over (timestamps, positions/velocities) ---
+        des_pos_spline = CubicSpline(timestamps, positions, axis=0)
+        des_vel_spline = CubicSpline(timestamps, velocities, axis=0)
+
+        # --- 4. Dense waypoints = every sampled point ---
+        waypoints_pos = positions
+        waypoints_vel = velocities
+
+        self.des_pos_spline = des_pos_spline
+        self.des_vel_spline = des_vel_spline
+        self.waypoints_pos = waypoints_pos
+        self.waypoints_vel = waypoints_vel
+
+        return {
+            "des_pos_spline": des_pos_spline,
+            "des_vel_spline": des_vel_spline,
+            "waypoints_pos": waypoints_pos,
+            "waypoints_vel": waypoints_vel,
+            "timestamps": timestamps,
+            "total_time": float(timestamps[-1]),
+        }
 
     @staticmethod
     def _evaluate_axis(axis: _AxisSolution, p0: float, v0: float,
@@ -341,3 +358,14 @@ class PointMassPlanner(Planner):
             pos = axis.p1 + axis.v1 * dt + 0.5 * axis.u_brake * dt * dt
             vel = axis.v1 + axis.u_brake * dt
         return pos, vel
+    
+    def get_pos_traj(self) -> np.ndarray:
+        """TBD: for Ruff.
+
+        Args:
+            TBD: for Ruff.
+
+        Returns:
+            TBD: for Ruff.
+        """
+        return self.des_pos_spline(np.linspace(0, self.t_total, 100))
