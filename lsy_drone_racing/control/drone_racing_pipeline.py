@@ -8,6 +8,7 @@ from __future__ import annotations  # Python 3.10 type hints
 from typing import TYPE_CHECKING
 
 import numpy as np
+import time
 from crazyflow.sim.visualize import draw_capsule, draw_line, draw_points
 
 from lsy_drone_racing.control.basic_planner import BasicPlanner
@@ -15,6 +16,7 @@ from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.nmpc.nmpc import NMPC
 from lsy_drone_racing.control.PointMassPlanner import PointMassPlanner
+
 
 if TYPE_CHECKING:
     from crazyflow import Sim
@@ -121,8 +123,9 @@ class DroneRacingPipeline(Controller):
         # setup for planner
         # self._planner = BasicPlanner(config, t_total)
         self._planner = PointMassPlanner(env_states, info, config, t_total)
-        
-        planner_dict = self._planner.plan(env_states)
+        self._tick = 0
+        self.freq = config.env.freq
+        planner_dict = self._planner.plan(env_states, 0)
         # planner_dict = self._planner.plan()
         # setup for controller
         self._controller = NMPC(env_states, planner_dict, info, config, t_total)
@@ -142,8 +145,10 @@ class DroneRacingPipeline(Controller):
             [r_des, p_des, y_des, t_des] as a numpy array.
         """
         env_states = extract_env_states(obs)  # align information with naming convention
-
-        # self._planner.replan()
+        self._tick += 1
+        elapsed = self._tick / self.freq
+        #print(elapsed,flush=True)
+        planner_dict = self._planner.plan(env_states, elapsed)
         u0 = self._controller.control(env_states, info)
         return u0
 
@@ -168,8 +173,8 @@ class DroneRacingPipeline(Controller):
 
     def render_callback(self, sim: Sim):
         """Visualize the desired trajectory, setpoint, gates and obstacles."""
-        setpoint = self._controller.get_setpoint().reshape(1, -1)
-        draw_points(sim, setpoint, rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
+        #setpoint = self._controller.get_setpoint().reshape(1, -1)
+        #draw_points(sim, setpoint, rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
         trajectory = self._planner.get_pos_traj()
         draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
         trajectory = self._controller.get_predicted_traj()
