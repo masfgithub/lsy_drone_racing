@@ -13,9 +13,7 @@ from lsy_drone_racing.control.planner import (
 __all__ = ["PointMassPlanner"]
 
 # Module-level constants.
-GRAVITY = 9.81                  # gravitational acceleration
-DEFAULT_MASS = 0.8              # weigth of the drone
-DEFAULT_THRUST_TO_WEIGHT = 2.5  # used to calculate the maximum thrust
+DEFAULT_THRUST = 15
 
 
 @dataclass
@@ -41,13 +39,12 @@ class _Gate:
 
 class PointMassPlanner(Planner):
     # Constructor
-    def __init__(self, obs: EnvState_t, info: dict, config: dict, t_total: int,  mass: float = DEFAULT_MASS,
-                 thrust_to_weight: float = DEFAULT_THRUST_TO_WEIGHT,
+    def __init__(self, obs: EnvState_t, info: dict, config: dict, t_total: int,
+                 thrust: float = DEFAULT_THRUST,
                  max_speed: float = 2.0,
                  samples_per_gate: int = 27) -> None:
         super().__init__()
-        self.mass = mass
-        self.thrust_to_weight = thrust_to_weight
+        self.thrust = thrust
         self.max_speed = max_speed
         self.samples_per_gate = samples_per_gate
         self._last_trajectory: Trajectory | None = None
@@ -57,7 +54,7 @@ class PointMassPlanner(Planner):
     @property
     def max_acceleration(self) -> float:
         """Largest acceleration the point mass can sustain, gravity removed."""
-        return (self.thrust_to_weight - 1.0) * GRAVITY
+        return self.thrust
 
     # Planner to be called in control
     def plan(self, obs: EnvState_t, info: dict | None = None) -> Trajectory:
