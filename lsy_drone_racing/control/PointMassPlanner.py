@@ -13,7 +13,7 @@ from lsy_drone_racing.control.planner import (
 __all__ = ["PointMassPlanner"]
 
 # Module-level constants.
-DEFAULT_THRUST = 15
+DEFAULT_THRUST = 10
 
 
 @dataclass
@@ -57,10 +57,14 @@ class PointMassPlanner(Planner):
         return self.thrust
 
     # Planner to be called in control
-    def plan(self, obs: EnvState_t, info: dict | None = None) -> Trajectory:
+    def plan(self, obs: EnvState_t, time: float, info: dict | None = None) -> Trajectory:
+        gate_idx = obs.pTLL_index
+        #print('asdfasdfasdfasdf', gate_idx)
+        if gate_idx < 0:
+            gate_idx = 0
 
         gate_objs = []
-        for i in range(len(obs.qTLT_array)):
+        for i in range(gate_idx, len(obs.qTLT_array)):
             gate_objs.append(_Gate(obs.pTLL_array[i], R.from_quat(obs.qTLT_array[i]).as_euler("xyz")[2]))
 
         start_node = _Node(obs.pTLL_index, obs.pBLL, obs.vBLL)
@@ -68,7 +72,7 @@ class PointMassPlanner(Planner):
         columns = self._build_graph(start_node, gate_objs)
         path = self._shortest_path(columns)
 
-        return self._build_trajectory(path, self.freq, self.t_total)
+        return self._build_trajectory(path, time)
 
     def reset(self) -> None:
         """Clear cached state between runs."""
@@ -254,8 +258,7 @@ class PointMassPlanner(Planner):
         return path
     
     # adjust alpha to match the axis times and construct trajectory with the lowest cost sample
-    def _build_trajectory(self, path: list[_Node],
-                      freq: float,
+    def _build_trajectory(self, path: list[_Node], time, 
                       samples_per_segment: int = 100,
                       v_min: float = 0.3,
                       v_max: float = 0.8,
@@ -269,14 +272,13 @@ class PointMassPlanner(Planner):
         v_max            : maximum speed (m/s) in straightest sections
         angle_sharpness  : how aggressively speed drops with angle
         """
-        from scipy.interpolate import CubicSpline
 
         u = self.max_acceleration
         u_acc = np.full(3, +u)
         u_brake = np.full(3, -u)
 
-        # --- 1. Sample geometry from the bang-bang solver (velocities thrown away) ---
-        all_pos: list[np.ndarray] = []
+        seg_axes = []
+        seg_times = []
         for seg in range(len(path) - 1):
             node_a, node_b = path[seg], path[seg + 1]
             axes = self._resolve_segment(
@@ -284,121 +286,64 @@ class PointMassPlanner(Planner):
                 node_a.velocity, node_b.velocity,
                 u_acc, u_brake,
             )
-            seg_time = max(ax.t1 + ax.t2 for ax in axes)
-            last = (seg == len(path) - 2)
-            ts = np.linspace(0.0, seg_time, samples_per_segment, endpoint=last)
+            seg_axes.append(axes)
+            seg_times.append(max(ax.t1 + ax.t2 for ax in axes))
+
+        rest_time = self.t_total - time
+        seg_times = np.array(seg_times)
+        seg_ratio = seg_times / seg_times.sum()
+
+        n_samples = np.round(self.freq * rest_time).astype(int)
+
+        n_seg = np.round(seg_ratio * n_samples).astype(int)
+        #print(path)
+        all_pos = []
+        for i in range(len(seg_times)):
+
+            ts = np.linspace(0.0, seg_times[i], n_seg[i])
+            #print('ts during the segment',ts)
+            #print('size of ts during the segment',len(ts))
+            #print('i',i)
+            node_a = path[i]
+            axes = seg_axes[i]
             for t in ts:
                 pos = np.empty(3)
-                for i in range(3):
-                    pos[i], _ = self._evaluate_axis(
-                        axes[i], node_a.position[i], node_a.velocity[i], t)
+                for j in range(3):
+                    pos[j], _ = self._evaluate_axis(
+                        axes[j], node_a.position[j], node_a.velocity[j], t)
                 all_pos.append(pos)
-        raw_positions = np.array(all_pos)
-        n = len(raw_positions)
 
-        # --- 2. Distance to neighbours (per-sample) ---
-        # use the average of (dist to prev) and (dist to next) so it's symmetric
-        diffs = np.diff(raw_positions, axis=0)
-        seg_lengths = np.linalg.norm(diffs, axis=1)        # length n-1
-        dist_per_sample = np.zeros(n)
-        dist_per_sample[1:-1] = 0.5 * (seg_lengths[:-1] + seg_lengths[1:])
-        dist_per_sample[0]    = seg_lengths[0]
-        dist_per_sample[-1]   = seg_lengths[-1]
+        all_pos = np.array(all_pos)
 
-        # normalize distance to [0, 1]
-        d_max = dist_per_sample.max()
-        if d_max < 1e-9:
-            dist_factor = np.zeros(n)
-        else:
-            dist_factor = dist_per_sample / d_max
+        #all_speed = np.diff(all_pos, axis=0)*self.freq
+        all_speed = np.diff(all_pos, axis=0)/(seg_times.sum()/n_samples)
 
-        # --- 3. Turning angle (per-sample) ---
-        angles = np.zeros(n)
-        for i in range(1, n - 1):
-            v_in = raw_positions[i] - raw_positions[i - 1]
-            v_out = raw_positions[i + 1] - raw_positions[i]
-            n_in = np.linalg.norm(v_in)
-            n_out = np.linalg.norm(v_out)
-            if n_in < 1e-9 or n_out < 1e-9:
-                continue
-            cos_a = np.clip(np.dot(v_in, v_out) / (n_in * n_out), -1.0, 1.0)
-            angles[i] = np.arccos(cos_a)
-        if n > 1:
-            angles[0] = angles[1]
-            angles[-1] = angles[-2]
-
-        # smooth single-sample kinks
-        window = 11
-        kernel = np.ones(window) / window
-        angles = np.convolve(angles, kernel, mode='same')
-
-        # angle penalty: 1 in straights, decays to 0 in sharp turns
-        angle_factor = np.exp(-angle_sharpness * angles)
-
-        # --- 4. Combine: speed = v_min + (v_max - v_min) * dist_factor * angle_factor ---
-        # dist_factor pushes speed up where samples are spread out (long straights),
-        # angle_factor pulls it back down where the path bends sharply.
-        combined = dist_factor * angle_factor
-        speeds = v_min + (v_max - v_min) * combined
-        # safety clamp
-        speeds = np.clip(speeds, v_min, v_max)
-
-        # --- 5. Raw timestamps from per-segment travel time ---
-        # dt per segment = segment_length / average_speed
-        avg_speed = np.maximum(0.5 * (speeds[:-1] + speeds[1:]), 1e-6)
-        dt = seg_lengths / avg_speed
-        raw_timestamps = np.concatenate(([0.0], np.cumsum(dt)))
-
-        eps = 1e-9
-        for i in range(1, len(raw_timestamps)):
-            if raw_timestamps[i] <= raw_timestamps[i - 1]:
-                raw_timestamps[i] = raw_timestamps[i - 1] + eps
-
-        total_time = float(raw_timestamps[-1])
-
-        # --- 6. Velocity vectors (speed * unit tangent) ---
-        raw_velocities = np.zeros_like(raw_positions)
-        for i in range(n):
-            if i == 0:
-                tangent = raw_positions[1] - raw_positions[0]
-            elif i == n - 1:
-                tangent = raw_positions[-1] - raw_positions[-2]
-            else:
-                tangent = raw_positions[i + 1] - raw_positions[i - 1]
-            norm = np.linalg.norm(tangent)
-            if norm < 1e-9:
-                continue
-            raw_velocities[i] = speeds[i] * (tangent / norm)
-
-        # --- 7. Splines on the raw irregular grid ---
-        des_pos_spline = CubicSpline(raw_timestamps, raw_positions, axis=0)
-        des_vel_spline = CubicSpline(raw_timestamps, raw_velocities, axis=0)
-
-        # --- 8. Resample onto uniform 1/freq grid for the NMPC ---
-        n_ticks = int(np.ceil(total_time * freq)) + 1
-        uniform_t = np.arange(n_ticks) / freq
-        uniform_t[-1] = min(uniform_t[-1], total_time)
-
-        waypoints_pos = des_pos_spline(uniform_t)
-        waypoints_vel = des_vel_spline(uniform_t)
-
-        # cache for get_pos_traj() etc.
-        self.des_pos_spline = des_pos_spline
-        self.des_vel_spline = des_vel_spline
-        self.waypoints_pos = waypoints_pos
-        self.waypoints_vel = waypoints_vel
-        self.t_total = total_time
+        all_speed = np.append(all_speed, all_speed[-1:], axis=0)
 
 
 
-        return {
-            "des_pos_spline": des_pos_spline,
-            "des_vel_spline": des_vel_spline,
-            "waypoints_pos": waypoints_pos,
-            "waypoints_vel": waypoints_vel,
-            "timestamps": uniform_t,
-            "total_time": total_time,
+        self._waypoints_vel = all_speed
+        self._waypoints_pos = all_pos
+
+        #print(all_pos)
+
+        
+
+
+        #print('all_pos',len(all_pos))
+        #print('ts',ts, flush=True)
+        #print('segment times',seg_times, flush=True)
+        #print('segment times sum',seg_times.sum(), flush=True)
+        print('n_samples', n_samples, flush=True)
+        #print('n_seg',n_seg, flush=True)
+
+        planner_dict = {
+            "waypoints_pos": self._waypoints_pos,
+            "waypoints_vel": self._waypoints_vel,
         }
+
+        return planner_dict
+
 
     @staticmethod
     def _evaluate_axis(axis: _AxisSolution, p0: float, v0: float,
@@ -422,4 +367,4 @@ class PointMassPlanner(Planner):
         Returns:
             TBD: for Ruff.
         """
-        return self.des_pos_spline(np.linspace(0, self.t_total, 100))
+        return self._waypoints_pos
