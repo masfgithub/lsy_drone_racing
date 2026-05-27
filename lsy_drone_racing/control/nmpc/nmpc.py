@@ -180,8 +180,8 @@ class NMPC(ControllerInterface):
         Returns:
             TBD: for Ruff.
         """
-        self._des_pos_spline = planner_traj["des_pos_spline"]
-        self._des_vel_spline = planner_traj["des_vel_spline"]
+        #self._des_pos_spline = planner_traj["des_pos_spline"]
+        #self._des_vel_spline = planner_traj["des_vel_spline"]
         self._waypoints_pos = planner_traj["waypoints_pos"]
         self._waypoints_vel = planner_traj["waypoints_vel"]
         self._waypoints_yaw = self._waypoints_pos[:, 0] * 0
