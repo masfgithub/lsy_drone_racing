@@ -123,7 +123,7 @@ class DroneRacingPipeline(Controller):
         self._planner = PointMassPlanner(env_states, info, config, t_total)
         
         planner_dict = self._planner.plan(env_states)
-
+        # planner_dict = self._planner.plan()
         # setup for controller
         self._controller = NMPC(env_states, planner_dict, info, config, t_total)
 
