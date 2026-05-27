@@ -8,7 +8,7 @@ from __future__ import annotations  # Python 3.10 type hints
 from typing import TYPE_CHECKING
 
 import numpy as np
-from crazyflow.sim.visualize import draw_capsule, draw_line, draw_points
+from crazyflow.sim.visualize import draw_capsule, draw_line
 
 from lsy_drone_racing.control.basic_planner import BasicPlanner
 from lsy_drone_racing.control.controller import Controller
@@ -28,10 +28,11 @@ def _draw_gate(
     total_height: float,
     hole_width: float,
     hole_height: float,
+    thickness: float = 0.05,
     rgba: NDArray | None = None,
     radius: float = 0.02,
 ):
-    """Draw a gate (window frame) as eight capsules in the simulation."""
+    """Draw a gate (window frame) as capsules accounting for wall thickness."""
     if sim.viewer is None:
         return
 
@@ -54,24 +55,63 @@ def _draw_gate(
     hh = total_height / 2.0
     hw = hole_width / 2.0
     hho = hole_height / 2.0
+    hx = thickness / 2.0  # half-thickness along local x
 
-    otl = np.array([0.0, -hl, hh])
-    otr = np.array([0.0, hl, hh])
-    obl = np.array([0.0, -hl, -hh])
-    obr = np.array([0.0, hl, -hh])
-    tl = np.array([0.0, -hw, hho])
-    tr = np.array([0.0, hw, hho])
-    bl = np.array([0.0, -hw, -hho])
-    br = np.array([0.0, hw, -hho])
+    # Corner points at front face (+hx) and back face (-hx)
+    # Outer corners
+    otl_f = [+hx, -hl, hh]
+    otl_b = [-hx, -hl, hh]
+    otr_f = [+hx, hl, hh]
+    otr_b = [-hx, hl, hh]
+    obl_f = [+hx, -hl, -hh]
+    obl_b = [-hx, -hl, -hh]
+    obr_f = [+hx, hl, -hh]
+    obr_b = [-hx, hl, -hh]
 
-    draw_capsule(sim, to_world(otl), to_world(obl), radius=radius, rgba=rgba, cylinder=True)
-    draw_capsule(sim, to_world(otr), to_world(obr), radius=radius, rgba=rgba, cylinder=True)
-    draw_capsule(sim, to_world(otl), to_world(otr), radius=radius, rgba=rgba, cylinder=True)
-    draw_capsule(sim, to_world(obl), to_world(obr), radius=radius, rgba=rgba, cylinder=True)
-    draw_capsule(sim, to_world(tl), to_world(tr), radius=radius, rgba=rgba, cylinder=True)
-    draw_capsule(sim, to_world(bl), to_world(br), radius=radius, rgba=rgba, cylinder=True)
-    draw_capsule(sim, to_world(tl), to_world(bl), radius=radius, rgba=rgba, cylinder=True)
-    draw_capsule(sim, to_world(tr), to_world(br), radius=radius, rgba=rgba, cylinder=True)
+    # Inner (hole) corners
+    tl_f = [+hx, -hw, hho]
+    tl_b = [-hx, -hw, hho]
+    tr_f = [+hx, hw, hho]
+    tr_b = [-hx, hw, hho]
+    bl_f = [+hx, -hw, -hho]
+    bl_b = [-hx, -hw, -hho]
+    br_f = [+hx, hw, -hho]
+    br_b = [-hx, hw, -hho]
+
+    def bar(a: list, b: list):
+        draw_capsule(sim, to_world(a), to_world(b), radius=radius, rgba=rgba, cylinder=True)
+
+    # ── Front face bars ───────────────────────────────────────────────────────
+    bar(otl_f, obl_f)  # outer left vertical
+    bar(otr_f, obr_f)  # outer right vertical
+    bar(otl_f, otr_f)  # outer top horizontal
+    bar(obl_f, obr_f)  # outer bottom horizontal
+    bar(tl_f, tr_f)  # inner top horizontal
+    bar(bl_f, br_f)  # inner bottom horizontal
+    bar(tl_f, bl_f)  # inner left vertical
+    bar(tr_f, br_f)  # inner right vertical
+
+    # ── Back face bars ────────────────────────────────────────────────────────
+    bar(otl_b, obl_b)
+    bar(otr_b, obr_b)
+    bar(otl_b, otr_b)
+    bar(obl_b, obr_b)
+    bar(tl_b, tr_b)
+    bar(bl_b, br_b)
+    bar(tl_b, bl_b)
+    bar(tr_b, br_b)
+
+    # ── Depth bars connecting front to back (along local x) ──────────────────
+    # Outer corners
+    bar(otl_f, otl_b)
+    bar(otr_f, otr_b)
+    bar(obl_f, obl_b)
+    bar(obr_f, obr_b)
+    # Inner (hole) corners
+    bar(tl_f, tl_b)
+    bar(tr_f, tr_b)
+    bar(bl_f, bl_b)
+    bar(br_f, br_b)
 
 
 def _draw_cylinder_obstacle(
@@ -122,7 +162,7 @@ class DroneRacingPipeline(Controller):
         planner_dict = self._planner.plan()
 
         # setup for controller
-        self._controller = NMPC(env_states, planner_dict, info, config, t_total)
+        self._controller = NMPC(env_states, planner_dict, info, config, t_total, use_soft=True)
 
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
@@ -179,7 +219,8 @@ class DroneRacingPipeline(Controller):
                 total_height=gate.total_height,
                 hole_width=gate.hole_width,
                 hole_height=gate.hole_height,
-                rgba=np.array([0.0, 0.5, 1.0, 0.3]),
+                thickness=gate.thickness,
+                rgba=np.array([0.0, 0.5, 1.0, 1.0]),
             )
 
         for obs in self._controller._obstacles:
@@ -188,5 +229,5 @@ class DroneRacingPipeline(Controller):
                 position=obs.position,
                 height=obs.total_height,
                 radius=obs.d_min,
-                rgba=np.array([1.0, 0.2, 0.2, 0.3]),
+                rgba=np.array([1.0, 0.2, 0.2, 0.7]),
             )
