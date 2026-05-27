@@ -52,8 +52,8 @@ class NMPC(ControllerInterface):
         self._gates_information = {
             "total_length": 0.72,  # outer frame width  [m] — square gate, outer dim
             "total_height": 0.72,  # outer frame height [m] — square gate, outer dim
-            "hole_width": 0.30,  # opening width      [m]
-            "hole_height": 0.30,  # opening height     [m]
+            "hole_width": 0.25,  # opening width      [m]
+            "hole_height": 0.25,  # opening height     [m]
             "thickness": 0.10,  # frame depth        [m] — not in TOML, physical estimate
             "margin": 0.05,  # constraint margin  [m] — Window class default
         }
@@ -74,6 +74,9 @@ class NMPC(ControllerInterface):
         self._ny = self._nx + self._nu
         self._ny_e = self._nx
 
+        self.x_pred = np.zeros((self._N + 1, self._nx))
+        self.u_pred = np.ones((self._N, self._nu))
+
         self._tick = 0
         self._tick_max = len(self._waypoints_pos) - 1 - self._N
         self._config = config
@@ -89,9 +92,9 @@ class NMPC(ControllerInterface):
         x_ref = np.concatenate((pos_ref, np.zeros(3), np.zeros(3), np.zeros(3)))
         x_init = np.linspace(x0, x_ref, self._N + 1)
         for k in range(self._N + 1):
-            self._acados_ocp_solver.set(k, "x", x_init[k])
+            self.x_pred[k] = x_init[k]
         for k in range(self._N):
-            self._acados_ocp_solver.set(k, "u", np.zeros(self._nu))
+            self.u_pred[k] = np.zeros(self._nu)
 
     def control(self, obs: EnvState_t, info: dict | None = None) -> NDArray[np.floating]:
         """Compute the next desired collective thrust and roll/pitch/yaw of the drone.
@@ -115,6 +118,7 @@ class NMPC(ControllerInterface):
         x0 = np.concatenate((obs.pBLL, rpy, obs.vBLL, drpy))
         self._acados_ocp_solver.set(0, "lbx", x0)
         self._acados_ocp_solver.set(0, "ubx", x0)
+        self._acados_ocp_solver.set(0, "x", x0)
 
         # Setting state reference
         yref = np.zeros((self._N, self._ny))
@@ -140,21 +144,41 @@ class NMPC(ControllerInterface):
         # zero drpy
         self._acados_ocp_solver.set(self._N, "y_ref", yref_e)
 
+        # Warm start     
+        for k in range(self._N):
+            self._acados_ocp_solver.set(k, "u", self.u_pred[k])
+
+        for k in range(1, self._N+1):
+            self._acados_ocp_solver.set(k, "x", self.x_pred[k])   
+
         # Update environment parameters
         gates_quat_wxyz = np.roll(obs.qTLT_array, 1, axis=-1)
         self._gates = get_gate_objects(obs.pTLL_array, gates_quat_wxyz, self._gates_information)
         self._obstacles = get_obstacle_objects(obs.pOLL_array, self._obstacles_information)
         set_env_params(self._acados_ocp_solver, self._gates, self._obstacles, self._N)
 
-        # Solving problem and getting first input
-        status = self._acados_ocp_solver.solve()
+        # Solve the OCP
+        u = self.solve(obs, i)
+        return u
 
-        if status == 0:
-            self._infeas_counter = 0
-            self._u_traj = np.array([self._acados_ocp_solver.get(k, "u") for k in range(self._N)])
-            return self._u_traj[0]
+    def solve(self, obs: EnvState_t, i: int) -> np.ndarray:
+        """Solve the OCP and return the control input.
 
-        status_meanings = {
+        Handles solver failures gracefully:
+        - SUCCESS (0):           extract fresh u_traj/x_pred/u_pred, return u_traj[0]
+        - NLP_ITER_MAX (1):      accept solution (often still usable)
+        - MINIMUM_STEP_SIZE (3): accept solution (converged to local min)
+        - QP_FAILURE (4):        reset warm-start, retry once, then fall back
+        - INFEASIBLE (2):        fall back to stored trajectory with offset
+
+        Args:
+            obs: Observation object containing obs.pBLL (current position).
+            i:   Current waypoint index.
+
+        Returns:
+            Control input np.ndarray of shape (n_u,).
+        """
+        STATUS_MEANINGS = {
             0: "SUCCESS",
             1: "NLP_ITERATION_MAXIMUM",
             2: "INFEASIBLE",
@@ -163,13 +187,62 @@ class NMPC(ControllerInterface):
             5: "READY",
         }
 
-        self._infeas_counter += 1
-        if self._infeas_counter >= self._N:
-            # Clip to avoid index out of range
-            self._infeas_counter = self._N - 1
-        print(f"Solver infeasible for {self._infeas_counter} consecutive steps.")
-        print(f"Solver status: {status} → {status_meanings.get(status, 'UNKNOWN')}")
+        def _extract_solution(self):
+            """Pull x_pred, u_pred and u_traj from the solver."""
+            for k in range(self._N + 1):
+                self.x_pred[k] = self._acados_ocp_solver.get(k, "x")
+            for k in range(self._N):
+                self.u_pred[k] = self._acados_ocp_solver.get(k, "u")
+            self._u_traj = self.u_pred.copy()
+
+        status = self._acados_ocp_solver.solve()
+
+        # ── SUCCESS ───────────────────────────────────────────────────────────────
+        if status == 0:
+            self._infeas_counter = 0
+            _extract_solution(self)
+            return self._u_traj[0]
+
+        # ── NLP_ITERATION_MAXIMUM or MINIMUM_STEP_SIZE ────────────────────────────
+        if status in (1, 3):
+            print(
+                f"[MPC] Solver status: {STATUS_MEANINGS[status]} — "
+                f"accepting solution with caution."
+            )
+            self._infeas_counter = 0
+            _extract_solution(self)
+            return self._u_traj[0]
+
+        # ── QP_FAILURE ────────────────────────────────────────────────────────────
+        if status == 4:
+            print("[MPC] QP failure — resetting warm-start and retrying.")
+            pos_reset_idx = min(i + self._N, len(self._waypoints_pos) - 1)
+            pos_reset     = self._waypoints_pos[pos_reset_idx]
+            self.set_initial_warm_start(obs.pBLL, pos_reset)
+            print(f'N+1: {i + self._N}, waypoints: {len(self._waypoints_pos)}, point: {pos_reset}')
+            
+            retry_status = self._acados_ocp_solver.solve()
+            if retry_status == 0:
+                print("[MPC] Retry succeeded.")
+                self._infeas_counter = 0
+                _extract_solution(self)
+                return self._u_traj[0]
+            else:
+                print(
+                    f"[MPC] Retry failed: "
+                    f"{STATUS_MEANINGS.get(retry_status, 'UNKNOWN')} — "
+                    f"falling back to stored trajectory."
+                )
+
+        # ── INFEASIBLE or unrecovered failure — open-loop fallback ────────────────
+        self._infeas_counter = min(self._infeas_counter + 1, self._N - 1)
+        print(
+            f"[MPC] {STATUS_MEANINGS.get(status, 'UNKNOWN')} — "
+            f"infeasible for {self._infeas_counter} consecutive steps. "
+            f"Returning stored u_traj[{self._infeas_counter}]."
+        )
         return self._u_traj[self._infeas_counter]
+
 
     def set_ref_traj(self, planner_traj: dict):
         """TBD: for Ruff.
@@ -180,8 +253,6 @@ class NMPC(ControllerInterface):
         Returns:
             TBD: for Ruff.
         """
-        self._des_pos_spline = planner_traj["des_pos_spline"]
-        self._des_vel_spline = planner_traj["des_vel_spline"]
         self._waypoints_pos = planner_traj["waypoints_pos"]
         self._waypoints_vel = planner_traj["waypoints_vel"]
         self._waypoints_yaw = self._waypoints_pos[:, 0] * 0
@@ -226,14 +297,3 @@ class NMPC(ControllerInterface):
             Array of shape (N+1, 3) — predicted XYZ positions from k=0 to k=N.
         """
         return np.array([self._acados_ocp_solver.get(k, "x")[:3] for k in range(self._N + 1)])
-
-    def get_setpoint(self) -> np.ndarray:
-        """TBD: for Ruff.
-
-        Args:
-            TBD: for Ruff.
-
-        Returns:
-            TBD: for Ruff.
-        """
-        return self._des_pos_spline(self._tick / self._freq)

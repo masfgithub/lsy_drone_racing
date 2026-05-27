@@ -165,8 +165,6 @@ class DroneRacingPipeline(Controller):
 
     def render_callback(self, sim: Sim):
         """Visualize the desired trajectory, setpoint, gates and obstacles."""
-        setpoint = self._controller.get_setpoint().reshape(1, -1)
-        draw_points(sim, setpoint, rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
         trajectory = self._planner.get_pos_traj()
         draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
         trajectory = self._controller.get_predicted_traj()
@@ -181,7 +179,7 @@ class DroneRacingPipeline(Controller):
                 total_height=gate.total_height,
                 hole_width=gate.hole_width,
                 hole_height=gate.hole_height,
-                rgba=np.array([0.0, 0.5, 1.0, 1.0]),
+                rgba=np.array([0.0, 0.5, 1.0, 0.3]),
             )
 
         for obs in self._controller._obstacles:
@@ -190,5 +188,5 @@ class DroneRacingPipeline(Controller):
                 position=obs.position,
                 height=obs.total_height,
                 radius=obs.d_min,
-                rgba=np.array([1.0, 0.2, 0.2, 0.8]),
+                rgba=np.array([1.0, 0.2, 0.2, 0.3]),
             )

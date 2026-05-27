@@ -107,14 +107,3 @@ class ControllerInterface(ABC):
             TBD: for Ruff.
         """
         return
-
-    def get_setpoint(self) -> np.ndarray:
-        """TBD: for Ruff.
-
-        Args:
-            TBD: for Ruff.
-
-        Returns:
-            TBD: for Ruff.
-        """
-        return
