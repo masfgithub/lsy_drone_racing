@@ -61,7 +61,7 @@ class NMPC(ControllerInterface):
             "total_height": 0.72,
             "hole_width": 0.25,
             "hole_height": 0.25,
-            "thickness": 0.25,
+            "thickness": 0.3,
             "margin": 0.05,
         }
         self._obstacles_information = {"d_min": 0.15, "total_height": 2.0}
@@ -70,7 +70,7 @@ class NMPC(ControllerInterface):
 
         if use_soft:
             from lsy_drone_racing.control.nmpc.env_soft_constraints import (
-                get_gate_objects,
+                get_gate_objects,       # returns list[WedgeWindow]
                 get_obstacle_objects,
                 set_env_params,
             )

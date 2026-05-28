@@ -110,12 +110,12 @@ def create_ocp_solver_soft(
             0.5,
             0.5,
             0.5,  # rpy
-            2.5,
-            2.5,
-            2.5,  # vel
-            2.5,
-            2.5,
-            2.5,  # drpy
+            1.5,
+            1.5,
+            1.5,  # vel
+            1.5,
+            1.5,
+            1.5,  # drpy
         ]
     )
     Q_e = np.diag(
@@ -167,7 +167,7 @@ def create_ocp_solver_soft(
     ocp.solver_options.qp_solver = "FULL_CONDENSING_HPIPM"
     ocp.solver_options.hessian_approx = "GAUSS_NEWTON"
     ocp.solver_options.integrator_type = "ERK"
-    ocp.solver_options.nlp_solver_type = "SQP"
+    ocp.solver_options.nlp_solver_type = "SQP_RTI"
     ocp.solver_options.regularize_method = "CONVEXIFY"
     ocp.solver_options.levenberg_marquardt = 1e-2
     ocp.solver_options.nlp_solver_tol_stat = 1e-3

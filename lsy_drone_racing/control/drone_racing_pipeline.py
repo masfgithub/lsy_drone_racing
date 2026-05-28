@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-def _draw_gate(
+def _draw_wedge_gate(
     sim: Sim,
     position: NDArray,
     quaternion: NDArray,
@@ -30,9 +30,20 @@ def _draw_gate(
     hole_height: float,
     thickness: float = 0.05,
     rgba: NDArray | None = None,
-    radius: float = 0.02,
+    radius: float = 0.015,
 ):
-    """Draw a gate (window frame) as capsules accounting for wall thickness."""
+    """Draw the four wedge prisms of a WedgeWindow gate as capsule edges.
+
+    Each wedge has 6 vertices (4 base corners + 2 tip corners) and 9 edges.
+    The edges are drawn as capsules, matching the WedgeWindow geometry exactly.
+
+    Gate-local frame: x = gate normal, y = width, z = height.
+
+        Left / Right:  base at y = ±hl  (x∈[-a_x,+a_x], z∈[-hh,+hh])
+                       tip  at y = ±hw  (x=0, z∈[-hho,+hho])
+        Top  / Bottom: base at z = ±hh  (x∈[-a_x,+a_x], y∈[-hl,+hl])
+                       tip  at z = ±hho (x=0, y∈[-hw,+hw])
+    """
     if sim.viewer is None:
         return
 
@@ -40,78 +51,68 @@ def _draw_gate(
         rgba = np.array([0.0, 0.5, 1.0, 1.0])
 
     qw, qx, qy, qz = quaternion / np.linalg.norm(quaternion)
-    R_mat = np.array(
-        [
-            [1 - 2 * (qy**2 + qz**2), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
-            [2 * (qx * qy + qz * qw), 1 - 2 * (qx**2 + qz**2), 2 * (qy * qz - qx * qw)],
-            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx**2 + qy**2)],
-        ]
-    )
+    R_mat = np.array([
+        [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qz*qw), 2*(qx*qz + qy*qw)],
+        [2*(qx*qy + qz*qw), 1 - 2*(qx**2 + qz**2), 2*(qy*qz - qx*qw)],
+        [2*(qx*qz - qy*qw), 2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)],
+    ])
 
-    def to_world(local_vec: list) -> np.ndarray:
-        return position + R_mat @ np.asarray(local_vec)
+    def to_world(lv: np.ndarray) -> np.ndarray:
+        return np.asarray(position) + R_mat @ lv
 
-    hl = total_length / 2.0
-    hh = total_height / 2.0
-    hw = hole_width / 2.0
-    hho = hole_height / 2.0
-    hx = thickness / 2.0  # half-thickness along local x
-
-    # Corner points at front face (+hx) and back face (-hx)
-    # Outer corners
-    otl_f = [+hx, -hl, hh]
-    otl_b = [-hx, -hl, hh]
-    otr_f = [+hx, hl, hh]
-    otr_b = [-hx, hl, hh]
-    obl_f = [+hx, -hl, -hh]
-    obl_b = [-hx, -hl, -hh]
-    obr_f = [+hx, hl, -hh]
-    obr_b = [-hx, hl, -hh]
-
-    # Inner (hole) corners
-    tl_f = [+hx, -hw, hho]
-    tl_b = [-hx, -hw, hho]
-    tr_f = [+hx, hw, hho]
-    tr_b = [-hx, hw, hho]
-    bl_f = [+hx, -hw, -hho]
-    bl_b = [-hx, -hw, -hho]
-    br_f = [+hx, hw, -hho]
-    br_b = [-hx, hw, -hho]
-
-    def bar(a: list, b: list):
+    def edge(a: np.ndarray, b: np.ndarray):
         draw_capsule(sim, to_world(a), to_world(b), radius=radius, rgba=rgba, cylinder=True)
 
-    # ── Front face bars ───────────────────────────────────────────────────────
-    bar(otl_f, obl_f)  # outer left vertical
-    bar(otr_f, obr_f)  # outer right vertical
-    bar(otl_f, otr_f)  # outer top horizontal
-    bar(obl_f, obr_f)  # outer bottom horizontal
-    bar(tl_f, tr_f)  # inner top horizontal
-    bar(bl_f, br_f)  # inner bottom horizontal
-    bar(tl_f, bl_f)  # inner left vertical
-    bar(tr_f, br_f)  # inner right vertical
+    a_x = thickness    / 2.0
+    hl  = total_length / 2.0
+    hh  = total_height / 2.0
+    hw  = hole_width   / 2.0
+    hho = hole_height  / 2.0
 
-    # ── Back face bars ────────────────────────────────────────────────────────
-    bar(otl_b, obl_b)
-    bar(otr_b, obr_b)
-    bar(otl_b, otr_b)
-    bar(obl_b, obr_b)
-    bar(tl_b, tr_b)
-    bar(bl_b, br_b)
-    bar(tl_b, bl_b)
-    bar(tr_b, br_b)
+    def draw_prism(base_d, tip_d, depth_idx, ax_idx, perp_idx,
+                   h_perp_base, h_perp_tip):
+        """Draw one wedge prism as 9 capsule edges.
 
-    # ── Depth bars connecting front to back (along local x) ──────────────────
-    # Outer corners
-    bar(otl_f, otl_b)
-    bar(otr_f, otr_b)
-    bar(obl_f, obl_b)
-    bar(obr_f, obr_b)
-    # Inner (hole) corners
-    bar(tl_f, tl_b)
-    bar(tr_f, tr_b)
-    bar(bl_f, bl_b)
-    bar(br_f, br_b)
+        depth_idx  : axis of tapering (1=y for L/R, 2=z for T/B)
+        ax_idx     : gate normal axis (always 0 = x)
+        perp_idx   : remaining axis   (2=z for L/R, 1=y for T/B)
+        base_d     : depth coordinate at base
+        tip_d      : depth coordinate at tip
+        h_perp_base: perp half-extent at base
+        h_perp_tip : perp half-extent at tip
+        """
+        def pt(d, xv, perpv):
+            v = np.zeros(3)
+            v[depth_idx] = d
+            v[ax_idx]    = xv
+            v[perp_idx]  = perpv
+            return v
+
+        # 4 base corners
+        B0 = pt(base_d, -a_x,  h_perp_base)
+        B1 = pt(base_d,  a_x,  h_perp_base)
+        B2 = pt(base_d,  a_x, -h_perp_base)
+        B3 = pt(base_d, -a_x, -h_perp_base)
+        # 2 tip corners
+        T0 = pt(tip_d,   0.0,  h_perp_tip)
+        T1 = pt(tip_d,   0.0, -h_perp_tip)
+
+        # Base rectangle (4 edges)
+        edge(B0, B1); edge(B1, B2); edge(B2, B3); edge(B3, B0)
+        # Slant edges base → tip (4 edges)
+        edge(B0, T0); edge(B1, T0)
+        edge(B2, T1); edge(B3, T1)
+        # Tip edge (1 edge)
+        edge(T0, T1)
+
+    # Left:   depth=y(1), tip toward +y; base at -hl, tip at -hw
+    draw_prism(-hl, -hw, depth_idx=1, ax_idx=0, perp_idx=2, h_perp_base=hh,  h_perp_tip=hho)
+    # Right:  base at +hl, tip at +hw
+    draw_prism( hl,  hw, depth_idx=1, ax_idx=0, perp_idx=2, h_perp_base=hh,  h_perp_tip=hho)
+    # Top:    depth=z(2); base at +hh, tip at +hho
+    draw_prism( hh,  hho, depth_idx=2, ax_idx=0, perp_idx=1, h_perp_base=hl, h_perp_tip=hw)
+    # Bottom: base at -hh, tip at -hho
+    draw_prism(-hh, -hho, depth_idx=2, ax_idx=0, perp_idx=1, h_perp_base=hl, h_perp_tip=hw)
 
 
 def _draw_cylinder_obstacle(
@@ -141,48 +142,25 @@ class DroneRacingPipeline(Controller):
     """This class handles the pipeline for the drone racing. It includes planning and control."""
 
     def __init__(self, obs: dict[str, NDArray[np.floating]], info: dict, config: dict):
-        """Initialize the pipeline.
-
-        Args:
-            obs: The initial observation of the environment's state. See the environment's
-                observation space for details.
-            info: Additional environment information from the reset.
-            config: The configuration of the environment.
-        """
+        """Initialize the pipeline."""
         super().__init__(obs, info, config)
 
-        # variable setup
         t_total = 8
-        env_states = extract_env_states(obs)  # align information with naming convention
+        env_states = extract_env_states(obs)
         self._tick = 0
         self._finished = False
 
-        # setup for planner
         self._planner = BasicPlanner(config, t_total)
         planner_dict = self._planner.plan()
-
-        # setup for controller
         self._controller = NMPC(env_states, planner_dict, info, config, t_total, use_soft=True)
 
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
     ) -> NDArray[np.floating]:
-        """Compute the next desired collective thrust and roll/pitch/yaw of the drone.
-
-        Args:
-            obs: The current observation of the environment. See the environment's observation space
-                for details.
-            info: Optional additional information as a dictionary.
-
-        Returns:
-            The orientation as roll, pitch, yaw angles, and the collective thrust
-            [r_des, p_des, y_des, t_des] as a numpy array.
-        """
-        env_states = extract_env_states(obs)  # align information with naming convention
-
+        """Compute the next desired collective thrust and roll/pitch/yaw of the drone."""
+        env_states = extract_env_states(obs)
         self._planner.replan()
-        u0 = self._controller.control(env_states, info)
-        return u0
+        return self._controller.control(env_states, info)
 
     def step_callback(
         self,
@@ -211,7 +189,7 @@ class DroneRacingPipeline(Controller):
         draw_line(sim, trajectory, rgba=np.array([0.58, 0.0, 0.83, 1.0]))
 
         for gate in self._controller._gates:
-            _draw_gate(
+            _draw_wedge_gate(
                 sim,
                 position=gate.position,
                 quaternion=gate.quaternion,
