@@ -69,6 +69,9 @@ class PointMassPlanner(Planner):
 
         start_node = _Node(obs.pTLL_index, obs.pBLL, obs.vBLL)
 
+        
+        self.obsticles = obs.pOLL_array[:, :2]
+
         columns = self._build_graph(start_node, gate_objs)
         path = self._shortest_path(columns)
 
@@ -223,6 +226,7 @@ class PointMassPlanner(Planner):
         return columns
     
     # find cheapest notes
+    # find cheapest notes
     def _shortest_path(self, columns: list[list[_Node]]) -> list[_Node]:
 
         # init cost array and previous node array
@@ -230,13 +234,15 @@ class PointMassPlanner(Planner):
         prev = [[None] * len(col) for col in columns]
         for r in range(len(columns[0])):
             cost[0][r] = 0.0
-        
+
         # compute the cost from start to node for every waypoint and update if a cheaper one was found
         for c in range(len(columns) - 1):
             for r_a, node_a in enumerate(columns[c]):
                 if cost[c][r_a] == float("inf"):
                     continue
                 for r_b, node_b in enumerate(columns[c + 1]):
+                    if not self._clearance(self._segment_points(node_a, node_b)):
+                        continue   # segment hits an obstacle -> skip this edge
                     edge = self._segment_time(node_a, node_b)
                     new_cost = cost[c][r_a] + edge
                     if new_cost < cost[c + 1][r_b]:
@@ -246,7 +252,7 @@ class PointMassPlanner(Planner):
         # pick the cheapest path from the last nodes
         last = len(columns) - 1
         best_r = min(range(len(columns[last])), key=lambda r: cost[last][r])
-        
+
         # create path list of nodes with minimal cost
         path: list[_Node] = []
         c, r = last, best_r
@@ -368,3 +374,43 @@ class PointMassPlanner(Planner):
             TBD: for Ruff.
         """
         return self._waypoints_pos
+
+    def _clearance(self, segment: np.ndarray, clearance: float = 0.2) -> bool:
+        """Return True if the segment stays clear of every obstacle.
+
+        segment   : array of points along the trajectory, shape (N, 3) or (N, 2)
+        clearance : minimum allowed distance to any obstacle (metres)
+        """
+        for i in range(len(segment)):
+            for j in range(len(self.obsticles)):
+                distance = np.linalg.norm(segment[i] - self.obsticles[j])
+                if distance < clearance:
+                    return False
+        return True
+    
+    def _segment_points(self, node_a: _Node, node_b: _Node,
+                    n_check: int = 20) -> np.ndarray:
+        """Sample xy points along the curved segment between two nodes.
+
+        Returns an array of shape (n_check, 2) -- the trajectory's x and y at
+        n_check evenly spaced times from segment start to end.
+        """
+        u = self.max_acceleration
+        u_acc = np.full(3, +u)
+        u_brake = np.full(3, -u)
+
+        # The real (alpha-synchronized) segment -- same thing _build_trajectory uses.
+        axes = self._resolve_segment(
+            node_a.position, node_b.position,
+            node_a.velocity, node_b.velocity,
+            u_acc, u_brake,
+        )
+        seg_time = max(ax.t1 + ax.t2 for ax in axes)
+
+        ts = np.linspace(0.0, seg_time, n_check)
+        points = np.empty((n_check, 2))
+        for k, t in enumerate(ts):
+            for j in range(2):                      # x and y only (j=0, j=1)
+                points[k, j], _ = self._evaluate_axis(
+                    axes[j], node_a.position[j], node_a.velocity[j], t)
+        return points
