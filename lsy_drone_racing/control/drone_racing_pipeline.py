@@ -148,7 +148,7 @@ class DroneRacingPipeline(Controller):
         self._tick += 1
         elapsed = self._tick / self.freq
         #print(elapsed,flush=True)
-        planner_dict = self._planner.plan(env_states, elapsed)
+        planner_dict = self._planner._replan(env_states, elapsed)
         u0 = self._controller.control(env_states, info)
         return u0
 
