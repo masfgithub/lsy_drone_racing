@@ -1,96 +1,50 @@
-"""Controller that follows a point-mass-planner trajectory through the gates."""
-
+"""Controller driving the SplinePlanner (replans only when triggered)."""
 from __future__ import annotations
-
 from typing import TYPE_CHECKING
-
 import numpy as np
-
-import time
-from scipy.spatial.transform import Rotation
-
 from lsy_drone_racing.control import Controller
-from lsy_drone_racing.control.PointMassPlanner import PointMassPlanner, _Gate
+from lsy_drone_racing.control.env_obs import extract_env_states
+from lsy_drone_racing.control.SplinePlanner import SplinePlanner
+from lsy_drone_racing.control.replan_trigger import ReplanTrigger
 
 if TYPE_CHECKING:
     from crazyflow import Sim
     from numpy.typing import NDArray
 
 
-class _StartState:
-    def __init__(self, position: np.ndarray, velocity: np.ndarray) -> None:
-        self.position = position
-        self.velocity = velocity
-
 class StateController(Controller):
-
-    def __init__(self, obs: dict[str, NDArray[np.floating]], info: dict,
-                 config: dict):
+    def __init__(self, obs, info, config):
         super().__init__(obs, info, config)
         self._freq = config.env.freq
         self._tick = 0
         self._finished = False
+        self._t_total = 12
 
-        # max_speed kept low on purpose: the point-mass optimum is far too
-        # aggressive for the real drone to track. Raise this gradually.
-
-        self._planner = PointMassPlanner(max_speed=2.0)
-
-        gates = [
-            self._gate_from_obs(obs["gates_pos"][i], obs["gates_quat"][i])
-            for i in range(len(obs["gates_pos"]))
-        ]
-        start = _StartState(
-            position=np.asarray(obs["pos"], dtype=float).reshape(3),
-            velocity=np.asarray(obs["vel"], dtype=float).reshape(3),
-        )
-        now = time.time()  # seconds since epoch (Unix timestamp)
-        self._trajectory = self._planner.plan(start, gates, None)
-        after = time.time()
-        print(after - now)
-        print(self._trajectory.timestamps[-1])
-        self._t_total = float(self._trajectory.timestamps[-1])
-        print(f"planned trajectory: {len(self._trajectory.positions)} "
-              f"samples, total time {self._t_total:.3f} s")
-
-    @staticmethod
-    def _gate_from_obs(position, quat_xyzw) -> _Gate:
-        forward = Rotation.from_quat(quat_xyzw).apply([1.0, 0.0, 0.0])
-        yaw = float(np.arctan2(forward[1], forward[0]))
-        return _Gate(position=np.asarray(position, dtype=float).reshape(3),
-                     yaw=yaw)
-
-    def compute_control(self, obs, info=None) -> NDArray[np.floating]:
-        self._planner = PointMassPlanner(max_speed=2.0)
-
-        gates = [
-            self._gate_from_obs(obs["gates_pos"][i], obs["gates_quat"][i])
-            for i in range(len(obs["gates_pos"]))
-        ]
-        start = _StartState(
-            position=np.asarray(obs["pos"], dtype=float).reshape(3),
-            velocity=np.asarray(obs["vel"], dtype=float).reshape(3),
-        )
-        now = time.time()
-        t = self._tick / self._freq
-        t_total = 12
-        time_left = t_total - t
-        gate_idx = obs['target_gate']
-        self._trajectory = self._planner.plan(start, gates[gate_idx:], None, time_left)
+        env_states = extract_env_states(obs)
+        self._planner = SplinePlanner(env_states, info, config,
+                                      self._t_total, max_speed=2.0)
+        self._trajectory = self._planner.trajectory
+        self._setpoint = env_states.pBLL.copy()
         
-        if t >= self._t_total:
+
+    def compute_control(self, obs, info=None):
+        env_states = extract_env_states(obs)
+        t = self._tick / self._freq
+
+        
+
+        des_pos = self._planner.setpoint_at(t).copy()
+        des_pos[2] = max(des_pos[2], 0.1)
+
+        if int(np.atleast_1d(env_states.pTLL_index).ravel()[0]) < 0:
+            self._finished = True
+        if t >= self._planner.duration:
             self._finished = True
 
-        traj = self._trajectory
-        idx = int(np.searchsorted(traj.timestamps, t))
-        idx = min(idx, len(traj.positions) - 1)
-        des_pos = traj.positions[idx]
+        self._setpoint = des_pos
+        return np.concatenate((des_pos, np.zeros(10)), dtype=np.float32)
 
-        action = np.concatenate((des_pos, np.zeros(10)), dtype=np.float32)
-        return action
-
-    def step_callback(self, action, obs, reward, terminated, truncated,
-                      info) -> bool:
+    def step_callback(self, action, obs, reward, terminated, truncated, info):
         self._tick += 1
         return self._finished
 
@@ -98,14 +52,9 @@ class StateController(Controller):
         self._tick = 0
 
     def render_callback(self, sim: Sim):
-        """Visualize the planned trajectory and the current setpoint."""
         from crazyflow.sim.visualize import draw_line, draw_points
-
-        traj = self._trajectory
-        draw_line(sim, traj.positions, rgba=(0.0, 1.0, 0.0, 1.0))
-
-        idx = int(np.searchsorted(traj.timestamps,
-                                  self._tick / self._freq))# hier self tick veraendern
-        idx = min(idx, len(traj.positions) - 1)
-        setpoint = traj.positions[idx].reshape(1, -1)
-        draw_points(sim, setpoint, rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
+        positions = self._trajectory.positions
+        step = max(1, len(positions) // 100)
+        draw_line(sim, positions[::step], rgba=(0.0, 1.0, 0.0, 1.0))
+        draw_points(sim, self._setpoint.reshape(1, -1),
+                    rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
