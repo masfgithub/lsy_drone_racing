@@ -29,6 +29,7 @@ class SplinePlanner(Planner):
         gates = self._remaining_gates(obs)
 
         if gates.shape[0] == 0:
+            print('jasddsf')
             return self._hold(start)
 
         waypoints = self._build_waypoints(obs)
@@ -49,6 +50,8 @@ class SplinePlanner(Planner):
 
         positions = spline(s_samp)
         positions[:, 2] = np.maximum(positions[:, 2], 0.1)
+        #print(obs.pBLL)
+        #print(positions)
         tangents = spline(s_samp, 1)
         tangents /= np.linalg.norm(tangents, axis=1, keepdims=True) + 1e-9
         velocities = tangents * speed
@@ -90,14 +93,16 @@ class SplinePlanner(Planner):
         d = 0.6
         prev = start
         wps = [start]
-        for c, n in zip(gates, normals):
+        for gi, (c, n) in enumerate(zip(gates, normals)):
             n = n / (np.linalg.norm(n) + 1e-9)
             if np.dot(c - prev, n) < 0:
                 n = -n
             for offset in (-d, -d/2, 0.0, d/2, d):
-                wps.append(c + offset * n)
+                wp = c + offset * n
+                if gi == 0 and np.dot(wp - start, n) < 0.0:
+                    continue
+                wps.append(wp)
             prev = c + d * n
-
         wps = np.array(wps)
         wps = self._avoid_obstacles(wps, obs, safe=0.3)
         return wps
