@@ -16,7 +16,7 @@ from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.nmpc.nmpc import NMPC
 from lsy_drone_racing.control.PointMassPlanner import PointMassPlanner
-
+from lsy_drone_racing.control.SplinePlanner import SplinePlanner
 
 if TYPE_CHECKING:
     from crazyflow import Sim
@@ -160,8 +160,12 @@ class DroneRacingPipeline(Controller):
         self._tick = 0
         self._finished = False
 
-        self._planner = BasicPlanner(config, t_total)
-        planner_dict = self._planner.plan()
+        #self._planner = BasicPlanner(config, t_total)
+
+        self._planner = SplinePlanner(env_states, info, config,
+                                      t_total, max_speed=2.0)
+
+        planner_dict = self._planner.plan(env_states, info, config)
         self._controller = NMPC(env_states, planner_dict, info, config, t_total, use_soft=True)
 
     def compute_control(
@@ -169,7 +173,7 @@ class DroneRacingPipeline(Controller):
     ) -> NDArray[np.floating]:
         """Compute the next desired collective thrust and roll/pitch/yaw of the drone."""
         env_states = extract_env_states(obs)
-        self._planner.replan()
+        #self._planner.replan()
         return self._controller.control(env_states, info)
 
     def step_callback(

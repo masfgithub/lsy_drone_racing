@@ -5,7 +5,6 @@ import numpy as np
 from lsy_drone_racing.control import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.SplinePlanner import SplinePlanner
-from lsy_drone_racing.control.replan_trigger import ReplanTrigger
 
 if TYPE_CHECKING:
     from crazyflow import Sim

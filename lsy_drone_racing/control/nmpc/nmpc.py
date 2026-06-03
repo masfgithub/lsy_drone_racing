@@ -240,8 +240,8 @@ class NMPC(ControllerInterface):
 
     def set_ref_traj(self, planner_traj: dict):
         """Set reference trajectory from planner."""
-        self._waypoints_pos = planner_traj["waypoints_pos"]
-        self._waypoints_vel = planner_traj["waypoints_vel"]
+        self._waypoints_pos = planner_traj.positions#planner_traj["waypoints_pos"]
+        self._waypoints_vel = planner_traj.velocities#planner_traj["waypoints_vel"]
         self._waypoints_yaw = self._waypoints_pos[:, 0] * 0
 
     def reset(self):

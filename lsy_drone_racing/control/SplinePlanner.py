@@ -17,14 +17,14 @@ class SplinePlanner(Planner):
                  t_total: float, max_speed: float = 2.0):
         self.info = info
         self.config = config
-        self.t_total = float(t_total)
+        self._t_total = float(t_total)
         self.max_speed = float(max_speed)
         self.freq = config.env.freq          # 50 Hz on this env
         self._speed = None
-        self.trajectory = self.plan(obs, info, config, t_total)
+        self.trajectory = self.plan(obs, info, config)
 
     def plan(self, obs: EnvState_t, info: dict, config: dict,
-             t_total: float, t0: float = 0.0) -> Trajectory:
+             t0: float = 0.0) -> Trajectory:
         start = np.asarray(obs.pBLL, dtype=float)
         gates = self._remaining_gates(obs)
 
@@ -39,7 +39,7 @@ class SplinePlanner(Planner):
             return self._hold(start)
 
         if self._speed is None:
-            self._speed = total / self.t_total
+            self._speed = total / self._t_total
         speed = self._speed
 
         spline = CubicSpline(s, waypoints, axis=0)
@@ -58,7 +58,7 @@ class SplinePlanner(Planner):
 
     def replan(self, obs: EnvState_t, elapsed: float = 0.0) -> Trajectory:
         """Full replan from the live state through remaining gates."""
-        self.trajectory = self.plan(obs, self.info, self.config, self.t_total, t0=elapsed)
+        self.trajectory = self.plan(obs, self.info, self.config, self._t_total, t0=elapsed)
         return self.trajectory
 
     def _remaining_gates(self, obs: EnvState_t) -> np.ndarray:
@@ -151,6 +151,17 @@ class SplinePlanner(Planner):
         tq = min(t + lookahead_t, ts[-1])
         return np.array([np.interp(tq, ts, self.trajectory.positions[:, k])
                          for k in range(3)])
+
+    def get_pos_traj(self) -> np.ndarray:
+        """TBD: for Ruff.
+
+        Args:
+            TBD: for Ruff.
+
+        Returns:
+            TBD: for Ruff.
+        """
+        return self.trajectory.positions
 
     @property
     def duration(self) -> float:
