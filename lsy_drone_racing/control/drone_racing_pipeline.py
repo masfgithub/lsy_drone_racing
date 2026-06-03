@@ -157,9 +157,12 @@ class DroneRacingPipeline(Controller):
 
         t_total = 8
         env_states = extract_env_states(obs)
+        self.nominal_gates_position = env_states.pTLL_array
+        self.nominal_obstacles_position = env_states.pOLL_array
         self._tick = 0
+        self._freq = config.env.freq
         self._finished = False
-
+        self._config = config
         #self._planner = BasicPlanner(config, t_total)
 
         self._planner = SplinePlanner(env_states, info, config,
@@ -174,7 +177,28 @@ class DroneRacingPipeline(Controller):
         """Compute the next desired collective thrust and roll/pitch/yaw of the drone."""
         env_states = extract_env_states(obs)
         #self._planner.replan()
+
+        if self.get_replan_reason(env_states.pTLL_array[env_states.pTLL_index],
+                                  env_states.pTLL_index,
+                                  env_states.pOLL_array) == True:
+            self.nominal_gates_position = env_states.pTLL_array
+            self.nominal_obstacles_position = env_states.pOLL_array
+            planner_dict = self._planner.replan(env_states, self._tick / self._freq)
+            self._controller.set_ref_traj(planner_dict)
+            print('Replanned')
+            return self._controller.control(env_states, info)
+
         return self._controller.control(env_states, info)
+
+    def get_replan_reason(self, pTLL, pTLL_index, pOLL_array):
+        
+        if np.linalg.norm(self.nominal_gates_position[pTLL_index] - pTLL) > 0.01:
+            return True
+        
+        for i in range(4):
+            if np.linalg.norm(self.nominal_obstacles_position[i] - pOLL_array[i]) > 0.01:
+                return True
+        return False
 
     def step_callback(
         self,

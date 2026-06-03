@@ -58,7 +58,7 @@ class SplinePlanner(Planner):
 
     def replan(self, obs: EnvState_t, elapsed: float = 0.0) -> Trajectory:
         """Full replan from the live state through remaining gates."""
-        self.trajectory = self.plan(obs, self.info, self.config, self._t_total, t0=elapsed)
+        self.trajectory = self.plan(obs, self.info, self.config, elapsed)
         return self.trajectory
 
     def _remaining_gates(self, obs: EnvState_t) -> np.ndarray:
@@ -99,11 +99,11 @@ class SplinePlanner(Planner):
             prev = c + d * n
 
         wps = np.array(wps)
-        wps = self._avoid_obstacles(wps, obs, safe=0.3)
+        wps = self._avoid_obstacles(wps, obs, safe=0.15)
         return wps
     
     def _avoid_obstacles(self, wps: np.ndarray, obs: EnvState_t,
-                     safe: float = 0.3) -> np.ndarray:
+                     safe: float = 0.15) -> np.ndarray:
         obstacles = np.asarray(obs.pOLL_array, dtype=float)
         if obstacles.size == 0:
             return wps
