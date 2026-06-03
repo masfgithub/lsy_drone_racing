@@ -155,11 +155,12 @@ class DroneRacingPipeline(Controller):
         """Initialize the pipeline."""
         super().__init__(obs, info, config)
 
-        t_total = 8
+        t_total = 14
         env_states = extract_env_states(obs)
         self.nominal_gates_position = env_states.pTLL_array
         self.nominal_obstacles_position = env_states.pOLL_array
         self._tick = 0
+        self._tick_offset = 0
         self._freq = config.env.freq
         self._finished = False
         self._config = config
@@ -170,6 +171,7 @@ class DroneRacingPipeline(Controller):
 
         planner_dict = self._planner.plan(env_states, info, config)
         self._controller = NMPC(env_states, planner_dict, info, config, t_total, use_soft=True)
+        self._setpoint = env_states.pBLL.copy()
 
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
@@ -177,7 +179,8 @@ class DroneRacingPipeline(Controller):
         """Compute the next desired collective thrust and roll/pitch/yaw of the drone."""
         env_states = extract_env_states(obs)
         #self._planner.replan()
-
+        t = self._tick / self._freq
+        self._setpoint = self._planner.setpoint_at(t).copy()
         if self.get_replan_reason(env_states.pTLL_array[env_states.pTLL_index],
                                   env_states.pTLL_index,
                                   env_states.pOLL_array) == True:
@@ -186,9 +189,10 @@ class DroneRacingPipeline(Controller):
             planner_dict = self._planner.replan(env_states, self._tick / self._freq)
             self._controller.set_ref_traj(planner_dict)
             print('Replanned')
-            return self._controller.control(env_states, info)
+            self._tick_offset = self._tick
+            return self._controller.control(env_states, info, self._tick_offset)
 
-        return self._controller.control(env_states, info)
+        return self._controller.control(env_states, info, self._tick_offset)
 
     def get_replan_reason(self, pTLL, pTLL_index, pOLL_array):
         
@@ -225,6 +229,9 @@ class DroneRacingPipeline(Controller):
         draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
         trajectory = self._controller.get_predicted_traj()
         draw_line(sim, trajectory, rgba=np.array([0.58, 0.0, 0.83, 1.0]))
+
+        draw_points(sim, self._setpoint.reshape(1, -1),
+                    rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
 
         for gate in self._controller._gates:
             _draw_wedge_gate(

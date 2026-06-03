@@ -99,11 +99,11 @@ class SplinePlanner(Planner):
             prev = c + d * n
 
         wps = np.array(wps)
-        wps = self._avoid_obstacles(wps, obs, safe=0.15)
+        wps = self._avoid_obstacles(wps, obs, safe=0.3)
         return wps
     
     def _avoid_obstacles(self, wps: np.ndarray, obs: EnvState_t,
-                     safe: float = 0.15) -> np.ndarray:
+                     safe: float = 0.3) -> np.ndarray:
         obstacles = np.asarray(obs.pOLL_array, dtype=float)
         if obstacles.size == 0:
             return wps

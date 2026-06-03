@@ -141,9 +141,9 @@ class NMPC(ControllerInterface):
         for k in range(self._N):
             self.u_pred[k] = np.zeros(self._nu)
 
-    def control(self, obs: EnvState_t, info: dict | None = None) -> NDArray[np.floating]:
+    def control(self, obs: EnvState_t, info: dict | None = None, tick_offset: float = 0.0) -> NDArray[np.floating]:
         """Compute the next desired collective thrust and roll/pitch/yaw."""
-        i = min(self._tick, self._tick_max)
+        i = min(self._tick-tick_offset, self._tick_max-tick_offset)
         if self._tick >= self._tick_max:
             self._finished = True
 
