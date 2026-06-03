@@ -48,17 +48,19 @@ Parameter vector (N_PARAMS = 17 — identical to original Window)
 from __future__ import annotations
 
 import numpy as np
-from casadi import MX, fabs, fmax, fmin, sqrt, tanh, vertcat
+from casadi import MX, fabs, fmax, fmin, tanh, vertcat
 
 
 def _quat_to_rot(q: np.ndarray) -> np.ndarray:
     """Convert unit quaternion [qw, qx, qy, qz] to 3×3 rotation matrix."""
     qw, qx, qy, qz = q / np.linalg.norm(q)
-    return np.array([
-        [1 - 2*(qy**2 + qz**2),  2*(qx*qy - qz*qw),  2*(qx*qz + qy*qw)],
-        [2*(qx*qy + qz*qw),  1 - 2*(qx**2 + qz**2),  2*(qy*qz - qx*qw)],
-        [2*(qx*qz - qy*qw),  2*(qy*qz + qx*qw),  1 - 2*(qx**2 + qy**2)],
-    ])
+    return np.array(
+        [
+            [1 - 2 * (qy**2 + qz**2), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+            [2 * (qx * qy + qz * qw), 1 - 2 * (qx**2 + qz**2), 2 * (qy * qz - qx * qw)],
+            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx**2 + qy**2)],
+        ]
+    )
 
 
 class WedgeWindow:
@@ -93,16 +95,16 @@ class WedgeWindow:
         thickness: float,
         margin: float = 0.05,
     ):
-        self.position     = np.asarray(position,   dtype=float)
-        self.quaternion   = np.asarray(quaternion, dtype=float)
-        self.quaternion  /= np.linalg.norm(self.quaternion)
+        self.position = np.asarray(position, dtype=float)
+        self.quaternion = np.asarray(quaternion, dtype=float)
+        self.quaternion /= np.linalg.norm(self.quaternion)
         self.total_length = float(total_length)
         self.total_height = float(total_height)
-        self.hole_width   = float(hole_width)
-        self.hole_height  = float(hole_height)
-        self.thickness    = float(thickness)
-        self.margin       = float(margin)
-        self.R            = _quat_to_rot(self.quaternion).T   # world-to-gate
+        self.hole_width = float(hole_width)
+        self.hole_height = float(hole_height)
+        self.thickness = float(thickness)
+        self.margin = float(margin)
+        self.R = _quat_to_rot(self.quaternion).T  # world-to-gate
         self._update_derived()
 
     # ------------------------------------------------------------------
@@ -110,11 +112,11 @@ class WedgeWindow:
     # ------------------------------------------------------------------
 
     def _update_derived(self):
-        self.a_x = self.thickness    / 2.0
-        self.hl  = self.total_length / 2.0
-        self.hh  = self.total_height / 2.0
-        self.hw  = self.hole_width   / 2.0
-        self.hho = self.hole_height  / 2.0
+        self.a_x = self.thickness / 2.0
+        self.hl = self.total_length / 2.0
+        self.hh = self.total_height / 2.0
+        self.hw = self.hole_width / 2.0
+        self.hho = self.hole_height / 2.0
 
     # ------------------------------------------------------------------
     # Parameter vector
@@ -122,15 +124,17 @@ class WedgeWindow:
 
     def param_vector(self) -> np.ndarray:
         """Flat parameter vector of length N_PARAMS=17."""
-        return np.array([
-            *self.position,       # 0-2
-            *self.R.flatten(),    # 3-11
-            self.a_x,             # 12
-            self.hl,              # 13
-            self.hh,              # 14
-            self.hw,              # 15
-            self.hho,             # 16
-        ])
+        return np.array(
+            [
+                *self.position,  # 0-2
+                *self.R.flatten(),  # 3-11
+                self.a_x,  # 12
+                self.hl,  # 13
+                self.hh,  # 14
+                self.hw,  # 15
+                self.hho,  # 16
+            ]
+        )
 
     # ------------------------------------------------------------------
     # Update
@@ -138,26 +142,31 @@ class WedgeWindow:
 
     def update(
         self,
-        position:     list | np.ndarray | None = None,
-        quaternion:   list | np.ndarray | None = None,
+        position: list | np.ndarray | None = None,
+        quaternion: list | np.ndarray | None = None,
         total_length: float | None = None,
         total_height: float | None = None,
-        hole_width:   float | None = None,
-        hole_height:  float | None = None,
-        thickness:    float | None = None,
+        hole_width: float | None = None,
+        hole_height: float | None = None,
+        thickness: float | None = None,
     ):
         """Update any subset of gate parameters in-place."""
-        if position     is not None:
-            self.position   = np.asarray(position, dtype=float)
-        if quaternion   is not None:
+        if position is not None:
+            self.position = np.asarray(position, dtype=float)
+        if quaternion is not None:
             self.quaternion = np.asarray(quaternion, dtype=float)
             self.quaternion /= np.linalg.norm(self.quaternion)
-            self.R          = _quat_to_rot(self.quaternion).T
-        if total_length is not None: self.total_length = float(total_length)
-        if total_height is not None: self.total_height = float(total_height)
-        if hole_width   is not None: self.hole_width   = float(hole_width)
-        if hole_height  is not None: self.hole_height  = float(hole_height)
-        if thickness    is not None: self.thickness    = float(thickness)
+            self.R = _quat_to_rot(self.quaternion).T
+        if total_length is not None:
+            self.total_length = float(total_length)
+        if total_height is not None:
+            self.total_height = float(total_height)
+        if hole_width is not None:
+            self.hole_width = float(hole_width)
+        if hole_height is not None:
+            self.hole_height = float(hole_height)
+        if thickness is not None:
+            self.thickness = float(thickness)
         self._update_derived()
 
     # ------------------------------------------------------------------
@@ -204,8 +213,8 @@ class WedgeWindow:
         Returns:
             Scalar MX — unweighted sum of all four wedge penalties.
         """
-        eps       = 1e-6
-        sharpness = 30.0   # sigmoid steepness for depth-range gate
+        eps = 1e-6
+        sharpness = 30.0  # sigmoid steepness for depth-range gate
 
         # ── Unpack ────────────────────────────────────────────────────────
         cx, cy, cz = p_win[0], p_win[1], p_win[2]
@@ -216,13 +225,13 @@ class WedgeWindow:
                 R_sx[i, j] = p_win[3 + i * 3 + j]
 
         a_x = p_win[12]
-        hl  = p_win[13]
-        hh  = p_win[14]
-        hw  = p_win[15]
+        hl = p_win[13]
+        hh = p_win[14]
+        hw = p_win[15]
         hho = p_win[16]
 
         # ── Gate-local position ───────────────────────────────────────────
-        dp    = vertcat(pos_sym[0] - cx, pos_sym[1] - cy, pos_sym[2] - cz)
+        dp = vertcat(pos_sym[0] - cx, pos_sym[1] - cy, pos_sym[2] - cz)
         p_loc = R_sx @ dp
         px = p_loc[0]
         py = p_loc[1]
@@ -253,9 +262,9 @@ class WedgeWindow:
         #   narrow at z=+hho: y∈[-hw,+hw]  (hole width)
         # So the perp (y) DOES taper for T/B bars too, from hl to hw.
 
-        def wedge_pen(depth_coord, base_d, tip_d,
-                      ax_coord, h_ax,
-                      perp_coord, h_perp_base, h_perp_tip):
+        def wedge_pen(
+            depth_coord, base_d, tip_d, ax_coord, h_ax, perp_coord, h_perp_base, h_perp_tip
+        ):
             """Penalty for one wedge bar.
 
             depth_coord  : coordinate along depth axis (signed, base at base_d,
@@ -272,17 +281,17 @@ class WedgeWindow:
             t_raw = (depth_coord - base_d) / (span + eps)
 
             # Smooth gate: contribution is 0 outside [0, 1]
-            inside_base = 0.5 * (1.0 + tanh(sharpness * t_raw))         # 1 past base
-            inside_tip  = 0.5 * (1.0 - tanh(sharpness * (t_raw - 1.0))) # 1 before tip
+            inside_base = 0.5 * (1.0 + tanh(sharpness * t_raw))  # 1 past base
+            inside_tip = 0.5 * (1.0 - tanh(sharpness * (t_raw - 1.0)))  # 1 before tip
             inside_depth = inside_base * inside_tip
 
             # Tapered half-extents at depth t
-            t_clamp   = fmax(MX(0), fmin(MX(1), t_raw))
-            hx_t      = h_ax         * (1.0 - t_clamp)                  # x: a_x → 0
-            hperp_t   = h_perp_base  * (1.0 - t_clamp) + h_perp_tip * t_clamp
+            t_clamp = fmax(MX(0), fmin(MX(1), t_raw))
+            hx_t = h_ax * (1.0 - t_clamp)  # x: a_x → 0
+            hperp_t = h_perp_base * (1.0 - t_clamp) + h_perp_tip * t_clamp
 
             # Penetration in each dimension (positive when inside)
-            pen_x    = fmax(MX(0), hx_t    - fabs(ax_coord))
+            pen_x = fmax(MX(0), hx_t - fabs(ax_coord))
             pen_perp = fmax(MX(0), hperp_t - fabs(perp_coord))
 
             # Penalty: product of both penetrations squared, gated by depth
@@ -291,33 +300,53 @@ class WedgeWindow:
         # ── Left bar:   base at py = -hl, tip at py = -hw ────────────────
         #   depth = py,  ax = px (a_x→0),  perp = pz (hh→hho)
         pen_L = wedge_pen(
-            depth_coord=py, base_d=-hl, tip_d=-hw,
-            ax_coord=px, h_ax=a_x,
-            perp_coord=pz, h_perp_base=hh, h_perp_tip=hho,
+            depth_coord=py,
+            base_d=-hl,
+            tip_d=-hw,
+            ax_coord=px,
+            h_ax=a_x,
+            perp_coord=pz,
+            h_perp_base=hh,
+            h_perp_tip=hho,
         )
 
         # ── Right bar:  base at py = +hl, tip at py = +hw ────────────────
         #   mirror py → use -py so base is at -hl again
         pen_R = wedge_pen(
-            depth_coord=-py, base_d=-hl, tip_d=-hw,
-            ax_coord=px, h_ax=a_x,
-            perp_coord=pz, h_perp_base=hh, h_perp_tip=hho,
+            depth_coord=-py,
+            base_d=-hl,
+            tip_d=-hw,
+            ax_coord=px,
+            h_ax=a_x,
+            perp_coord=pz,
+            h_perp_base=hh,
+            h_perp_tip=hho,
         )
 
         # ── Top bar:    base at pz = +hh, tip at pz = +hho ───────────────
         #   depth = -pz (so base is at -hh and tip at -hho in local terms)
         #   ax = px (a_x→0),  perp = py (hl→hw)
         pen_T = wedge_pen(
-            depth_coord=-pz, base_d=-hh, tip_d=-hho,
-            ax_coord=px, h_ax=a_x,
-            perp_coord=py, h_perp_base=hl, h_perp_tip=hw,
+            depth_coord=-pz,
+            base_d=-hh,
+            tip_d=-hho,
+            ax_coord=px,
+            h_ax=a_x,
+            perp_coord=py,
+            h_perp_base=hl,
+            h_perp_tip=hw,
         )
 
         # ── Bottom bar: base at pz = -hh, tip at pz = -hho ───────────────
         pen_B = wedge_pen(
-            depth_coord=pz, base_d=-hh, tip_d=-hho,
-            ax_coord=px, h_ax=a_x,
-            perp_coord=py, h_perp_base=hl, h_perp_tip=hw,
+            depth_coord=pz,
+            base_d=-hh,
+            tip_d=-hho,
+            ax_coord=px,
+            h_ax=a_x,
+            perp_coord=py,
+            h_perp_base=hl,
+            h_perp_tip=hw,
         )
 
         return pen_L + pen_R + pen_T + pen_B
@@ -327,8 +356,14 @@ class WedgeWindow:
     # ------------------------------------------------------------------
 
     def _inside_wedge(
-        self, depth: float, base_d: float, tip_d: float,
-        ax: float, perp: float, h_perp_base: float, h_perp_tip: float
+        self,
+        depth: float,
+        base_d: float,
+        tip_d: float,
+        ax: float,
+        perp: float,
+        h_perp_base: float,
+        h_perp_tip: float,
     ) -> bool:
         """Return True if the point is inside one wedge bar (NumPy)."""
         span = tip_d - base_d
@@ -337,20 +372,19 @@ class WedgeWindow:
         t = (depth - base_d) / span
         if t < 0.0 or t > 1.0:
             return False
-        hx_t    = self.a_x * (1.0 - t)
+        hx_t = self.a_x * (1.0 - t)
         hperp_t = h_perp_base * (1.0 - t) + h_perp_tip * t
-        return (abs(ax) <= hx_t + self.margin and
-                abs(perp) <= hperp_t + self.margin)
+        return abs(ax) <= hx_t + self.margin and abs(perp) <= hperp_t + self.margin
 
     def _point_in_any_wedge(self, pos_world: np.ndarray) -> bool:
-        dp    = pos_world - self.position
+        dp = pos_world - self.position
         p_loc = self.R @ dp
         px, py, pz = p_loc
         return bool(
-            self._inside_wedge( py, -self.hl, -self.hw, px, pz, self.hh, self.hho) or  # L
-            self._inside_wedge(-py, -self.hl, -self.hw, px, pz, self.hh, self.hho) or  # R
-            self._inside_wedge(-pz, -self.hh, -self.hho, px, py, self.hl, self.hw) or  # T
-            self._inside_wedge( pz, -self.hh, -self.hho, px, py, self.hl, self.hw)     # B
+            self._inside_wedge(py, -self.hl, -self.hw, px, pz, self.hh, self.hho)  # L
+            or self._inside_wedge(-py, -self.hl, -self.hw, px, pz, self.hh, self.hho)  # R
+            or self._inside_wedge(-pz, -self.hh, -self.hho, px, py, self.hl, self.hw)  # T
+            or self._inside_wedge(pz, -self.hh, -self.hho, px, py, self.hl, self.hw)  # B
         )
 
     def verify(self, x_traj: np.ndarray) -> bool:
@@ -359,7 +393,7 @@ class WedgeWindow:
         for k in range(x_traj.shape[0]):
             pos = x_traj[k, :3]
             if self._point_in_any_wedge(pos):
-                dp    = pos - self.position
+                dp = pos - self.position
                 p_loc = self.R @ dp
                 print(
                     f"  VIOLATION node={k:3d} "
@@ -391,48 +425,54 @@ class WedgeWindow:
         def to_world(pts: np.ndarray) -> np.ndarray:
             return self.position + (self.R.T @ pts.T).T
 
-        def draw_prism(base_d, tip_d, depth_idx, ax_idx, perp_idx,
-                       h_perp_base, h_perp_tip):
+        def draw_prism(base_d, tip_d, depth_idx, ax_idx, perp_idx, h_perp_base, h_perp_tip):
             """Draw one wedge prism (6 vertices, 5 faces)."""
+
             def v(d, xv, perpv):
                 pt = np.zeros(3)
                 pt[depth_idx] = d
-                pt[ax_idx]    = xv
-                pt[perp_idx]  = perpv
+                pt[ax_idx] = xv
+                pt[perp_idx] = perpv
                 return pt
 
             # 4 base corners, 2 tip corners
-            B = [v(base_d, -self.a_x,  h_perp_base),   # B0: -x, +perp
-                 v(base_d,  self.a_x,  h_perp_base),   # B1: +x, +perp
-                 v(base_d,  self.a_x, -h_perp_base),   # B2: +x, -perp
-                 v(base_d, -self.a_x, -h_perp_base)]   # B3: -x, -perp
-            T = [v(tip_d,   0.0,       h_perp_tip),    # T0: tip, +perp
-                 v(tip_d,   0.0,      -h_perp_tip)]    # T1: tip, -perp
+            B = [
+                v(base_d, -self.a_x, h_perp_base),  # B0: -x, +perp
+                v(base_d, self.a_x, h_perp_base),  # B1: +x, +perp
+                v(base_d, self.a_x, -h_perp_base),  # B2: +x, -perp
+                v(base_d, -self.a_x, -h_perp_base),
+            ]  # B3: -x, -perp
+            T = [
+                v(tip_d, 0.0, h_perp_tip),  # T0: tip, +perp
+                v(tip_d, 0.0, -h_perp_tip),
+            ]  # T1: tip, -perp
 
             verts = to_world(np.array(B + T))
             B0, B1, B2, B3, T0, T1 = verts
 
             faces = [
-                [B0, B1, B2, B3],       # base rectangle
-                [B0, B1, T0],           # +perp slant top  (triangle)
-                [B3, B2, T1],           # -perp slant bot  (triangle)
-                [B0, B3, T1, T0],       # -x slant face    (quad)
-                [B1, B2, T1, T0],       # +x slant face    (quad)
+                [B0, B1, B2, B3],  # base rectangle
+                [B0, B1, T0],  # +perp slant top  (triangle)
+                [B3, B2, T1],  # -perp slant bot  (triangle)
+                [B0, B3, T1, T0],  # -x slant face    (quad)
+                [B1, B2, T1, T0],  # +x slant face    (quad)
             ]
             if abs(h_perp_tip) > 1e-6:
                 # Replace triangles with quads when tip has finite width
                 faces[1] = [B0, B1, T0]
                 faces[2] = [B2, B3, T1]
 
-            ax.add_collection3d(Poly3DCollection(
-                faces, facecolor=color, alpha=alpha,
-                edgecolor="sienna", linewidth=0.5))
+            ax.add_collection3d(
+                Poly3DCollection(
+                    faces, facecolor=color, alpha=alpha, edgecolor="sienna", linewidth=0.5
+                )
+            )
 
         # Left:   depth=y(1), ax=x(0), perp=z(2), base at -hl, tip at -hw
-        draw_prism(-self.hl, -self.hw, 1, 0, 2, self.hh,  self.hho)
+        draw_prism(-self.hl, -self.hw, 1, 0, 2, self.hh, self.hho)
         # Right:  mirror — base at +hl, tip at +hw
-        draw_prism( self.hl,  self.hw, 1, 0, 2, self.hh,  self.hho)
+        draw_prism(self.hl, self.hw, 1, 0, 2, self.hh, self.hho)
         # Top:    depth=z(2), ax=x(0), perp=y(1), base at +hh, tip at +hho
-        draw_prism( self.hh,  self.hho, 2, 0, 1, self.hl,  self.hw)
+        draw_prism(self.hh, self.hho, 2, 0, 1, self.hl, self.hw)
         # Bottom: base at -hh, tip at -hho
-        draw_prism(-self.hh, -self.hho, 2, 0, 1, self.hl,  self.hw)
+        draw_prism(-self.hh, -self.hho, 2, 0, 1, self.hl, self.hw)

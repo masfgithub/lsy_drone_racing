@@ -11,11 +11,11 @@ import numpy as np
 from casadi import MX, fmax
 
 try:
-    from wedge_window import WedgeWindow
     from obstacle import CylinderObstacle
+    from wedge_window import WedgeWindow
 except ImportError:
-    from lsy_drone_racing.control.nmpc.wedge_window import WedgeWindow
     from lsy_drone_racing.control.nmpc.obstacle import CylinderObstacle
+    from lsy_drone_racing.control.nmpc.wedge_window import WedgeWindow
 
 
 def get_obstacle_objects(
@@ -57,9 +57,7 @@ def get_gate_objects(
     ]
 
 
-def build_param_vector(
-    gates: list[WedgeWindow], obstacles: list[CylinderObstacle]
-) -> np.ndarray:
+def build_param_vector(gates: list[WedgeWindow], obstacles: list[CylinderObstacle]) -> np.ndarray:
     """Concatenate all gate and obstacle parameter vectors into one flat array."""
     parts = [g.param_vector() for g in gates] + [o.param_vector() for o in obstacles]
     return np.concatenate(parts) if parts else np.array([])
@@ -102,46 +100,43 @@ def create_soft_env_constraints(
         obstacles = []
 
     n_gates = len(gates)
-    n_obs   = len(obstacles)
-    n_p     = WedgeWindow.N_PARAMS * n_gates + CylinderObstacle.N_PARAMS * n_obs
+    n_obs = len(obstacles)
+    n_p = WedgeWindow.N_PARAMS * n_gates + CylinderObstacle.N_PARAMS * n_obs
 
     p = MX.sym("p", n_p)
     model.p = p
 
     penalty = MX(0)
-    offset  = 0
+    offset = 0
 
     for gate in gates:
-        p_win   = p[offset : offset + WedgeWindow.N_PARAMS]
+        p_win = p[offset : offset + WedgeWindow.N_PARAMS]
         penalty = penalty + gate_weight * WedgeWindow.casadi_penalty_sym(pBLL, p_win)
         offset += WedgeWindow.N_PARAMS
 
     for obs in obstacles:
-        p_obs   = p[offset : offset + CylinderObstacle.N_PARAMS]
-        dist    = CylinderObstacle.casadi_constraint_sym(pBLL, p_obs)
-        viol    = fmax(MX(0), MX(obs.d_min) - dist)
+        p_obs = p[offset : offset + CylinderObstacle.N_PARAMS]
+        dist = CylinderObstacle.casadi_constraint_sym(pBLL, p_obs)
+        viol = fmax(MX(0), MX(obs.d_min) - dist)
         penalty = penalty + obstacle_weight * viol * viol
         offset += CylinderObstacle.N_PARAMS
 
     p0 = build_param_vector(gates, obstacles)
 
     return {
-        "gates":          gates,
-        "obstacles":      obstacles,
-        "p":              p,
-        "p0":             p0,
-        "n_gates":        n_gates,
-        "n_obs":          n_obs,
-        "penalty_expr":   penalty,
+        "gates": gates,
+        "obstacles": obstacles,
+        "p": p,
+        "p0": p0,
+        "n_gates": n_gates,
+        "n_obs": n_obs,
+        "penalty_expr": penalty,
         "penalty_expr_e": penalty,
     }
 
 
 def set_env_params(
-    solver: object,
-    gates: list[WedgeWindow],
-    obstacles: list[CylinderObstacle],
-    N: int,
+    solver: object, gates: list[WedgeWindow], obstacles: list[CylinderObstacle], N: int
 ):
     """Push current gate and obstacle parameters to every shooting node."""
     p_vec = build_param_vector(gates, obstacles)
@@ -150,9 +145,7 @@ def set_env_params(
 
 
 def verify_env_constraints(
-    x_traj: np.ndarray,
-    gates: list[WedgeWindow],
-    obstacles: list[CylinderObstacle],
+    x_traj: np.ndarray, gates: list[WedgeWindow], obstacles: list[CylinderObstacle]
 ) -> bool:
     """Geometric verification for all gates and obstacles after solving."""
     all_ok = True

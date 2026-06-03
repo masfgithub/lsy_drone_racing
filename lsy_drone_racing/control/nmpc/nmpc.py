@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -70,7 +69,7 @@ class NMPC(ControllerInterface):
 
         if use_soft:
             from lsy_drone_racing.control.nmpc.env_soft_constraints import (
-                get_gate_objects,       # returns list[WedgeWindow]
+                get_gate_objects,  # returns list[WedgeWindow]
                 get_obstacle_objects,
                 set_env_params,
             )

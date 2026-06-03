@@ -51,11 +51,13 @@ def _draw_wedge_gate(
         rgba = np.array([0.0, 0.5, 1.0, 1.0])
 
     qw, qx, qy, qz = quaternion / np.linalg.norm(quaternion)
-    R_mat = np.array([
-        [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qz*qw), 2*(qx*qz + qy*qw)],
-        [2*(qx*qy + qz*qw), 1 - 2*(qx**2 + qz**2), 2*(qy*qz - qx*qw)],
-        [2*(qx*qz - qy*qw), 2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)],
-    ])
+    R_mat = np.array(
+        [
+            [1 - 2 * (qy**2 + qz**2), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+            [2 * (qx * qy + qz * qw), 1 - 2 * (qx**2 + qz**2), 2 * (qy * qz - qx * qw)],
+            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx**2 + qy**2)],
+        ]
+    )
 
     def to_world(lv: np.ndarray) -> np.ndarray:
         return np.asarray(position) + R_mat @ lv
@@ -63,14 +65,13 @@ def _draw_wedge_gate(
     def edge(a: np.ndarray, b: np.ndarray):
         draw_capsule(sim, to_world(a), to_world(b), radius=radius, rgba=rgba, cylinder=True)
 
-    a_x = thickness    / 2.0
-    hl  = total_length / 2.0
-    hh  = total_height / 2.0
-    hw  = hole_width   / 2.0
-    hho = hole_height  / 2.0
+    a_x = thickness / 2.0
+    hl = total_length / 2.0
+    hh = total_height / 2.0
+    hw = hole_width / 2.0
+    hho = hole_height / 2.0
 
-    def draw_prism(base_d, tip_d, depth_idx, ax_idx, perp_idx,
-                   h_perp_base, h_perp_tip):
+    def draw_prism(base_d, tip_d, depth_idx, ax_idx, perp_idx, h_perp_base, h_perp_tip):
         """Draw one wedge prism as 9 capsule edges.
 
         depth_idx  : axis of tapering (1=y for L/R, 2=z for T/B)
@@ -81,36 +82,42 @@ def _draw_wedge_gate(
         h_perp_base: perp half-extent at base
         h_perp_tip : perp half-extent at tip
         """
+
         def pt(d, xv, perpv):
             v = np.zeros(3)
             v[depth_idx] = d
-            v[ax_idx]    = xv
-            v[perp_idx]  = perpv
+            v[ax_idx] = xv
+            v[perp_idx] = perpv
             return v
 
         # 4 base corners
-        B0 = pt(base_d, -a_x,  h_perp_base)
-        B1 = pt(base_d,  a_x,  h_perp_base)
-        B2 = pt(base_d,  a_x, -h_perp_base)
+        B0 = pt(base_d, -a_x, h_perp_base)
+        B1 = pt(base_d, a_x, h_perp_base)
+        B2 = pt(base_d, a_x, -h_perp_base)
         B3 = pt(base_d, -a_x, -h_perp_base)
         # 2 tip corners
-        T0 = pt(tip_d,   0.0,  h_perp_tip)
-        T1 = pt(tip_d,   0.0, -h_perp_tip)
+        T0 = pt(tip_d, 0.0, h_perp_tip)
+        T1 = pt(tip_d, 0.0, -h_perp_tip)
 
         # Base rectangle (4 edges)
-        edge(B0, B1); edge(B1, B2); edge(B2, B3); edge(B3, B0)
+        edge(B0, B1)
+        edge(B1, B2)
+        edge(B2, B3)
+        edge(B3, B0)
         # Slant edges base → tip (4 edges)
-        edge(B0, T0); edge(B1, T0)
-        edge(B2, T1); edge(B3, T1)
+        edge(B0, T0)
+        edge(B1, T0)
+        edge(B2, T1)
+        edge(B3, T1)
         # Tip edge (1 edge)
         edge(T0, T1)
 
     # Left:   depth=y(1), tip toward +y; base at -hl, tip at -hw
-    draw_prism(-hl, -hw, depth_idx=1, ax_idx=0, perp_idx=2, h_perp_base=hh,  h_perp_tip=hho)
+    draw_prism(-hl, -hw, depth_idx=1, ax_idx=0, perp_idx=2, h_perp_base=hh, h_perp_tip=hho)
     # Right:  base at +hl, tip at +hw
-    draw_prism( hl,  hw, depth_idx=1, ax_idx=0, perp_idx=2, h_perp_base=hh,  h_perp_tip=hho)
+    draw_prism(hl, hw, depth_idx=1, ax_idx=0, perp_idx=2, h_perp_base=hh, h_perp_tip=hho)
     # Top:    depth=z(2); base at +hh, tip at +hho
-    draw_prism( hh,  hho, depth_idx=2, ax_idx=0, perp_idx=1, h_perp_base=hl, h_perp_tip=hw)
+    draw_prism(hh, hho, depth_idx=2, ax_idx=0, perp_idx=1, h_perp_base=hl, h_perp_tip=hw)
     # Bottom: base at -hh, tip at -hho
     draw_prism(-hh, -hho, depth_idx=2, ax_idx=0, perp_idx=1, h_perp_base=hl, h_perp_tip=hw)
 
