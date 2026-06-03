@@ -147,7 +147,6 @@ class DroneRacingPipeline(Controller):
         env_states = extract_env_states(obs)  # align information with naming convention
         self._tick += 1
         elapsed = self._tick / self.freq
-        #print(elapsed,flush=True)
         planner_dict = self._planner._replan(env_states, elapsed)
         u0 = self._controller.control(env_states, info)
         return u0

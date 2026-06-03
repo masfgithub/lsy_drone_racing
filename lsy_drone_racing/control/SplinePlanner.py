@@ -23,13 +23,12 @@ class SplinePlanner(Planner):
         self._speed = None
         self.trajectory = self.plan(obs, info, config, t_total)
 
-    # --- ABC interface --------------------------------------------------
     def plan(self, obs: EnvState_t, info: dict, config: dict,
              t_total: float, t0: float = 0.0) -> Trajectory:
         start = np.asarray(obs.pBLL, dtype=float)
         gates = self._remaining_gates(obs)
 
-        if gates.shape[0] == 0:                       # nothing left → hold
+        if gates.shape[0] == 0:
             return self._hold(start)
 
         waypoints = self._build_waypoints(obs)
@@ -39,13 +38,13 @@ class SplinePlanner(Planner):
         if total < 1e-6:
             return self._hold(start)
 
-        if self._speed is None:                       # cruise speed, set ONCE
+        if self._speed is None:
             self._speed = total / self.t_total
         speed = self._speed
 
         spline = CubicSpline(s, waypoints, axis=0)
         duration = total / speed
-        n = max(2, int(round(duration * self.freq)))  # points = seconds * Hz
+        n = max(2, int(round(duration * self.freq)))
         s_samp = np.linspace(0.0, total, n)
 
         positions = spline(s_samp)
@@ -57,17 +56,15 @@ class SplinePlanner(Planner):
         print(f"n={n}  duration={duration:.2f}s  total_len={total:.2f}m")
         return Trajectory(positions, velocities, timestamps)
 
-    # --- per-tick convenience ------------------------------------------
     def replan(self, obs: EnvState_t, elapsed: float = 0.0) -> Trajectory:
         """Full replan from the live state through remaining gates."""
         self.trajectory = self.plan(obs, self.info, self.config, self.t_total, t0=elapsed)
         return self.trajectory
 
-    # --- helpers --------------------------------------------------------
     def _remaining_gates(self, obs: EnvState_t) -> np.ndarray:
-        gates = np.asarray(obs.pTLL_array, dtype=float)      # (n, 3)
+        gates = np.asarray(obs.pTLL_array, dtype=float)
         idx = int(np.atleast_1d(obs.pTLL_index).ravel()[0])
-        if idx < 0:                                          # all passed
+        if idx < 0:
             return np.empty((0, 3))
         return gates[idx:]
 
@@ -78,7 +75,7 @@ class SplinePlanner(Planner):
     
     def _gate_normals(self, obs: EnvState_t) -> np.ndarray:
         quats = np.asarray(obs.qTLT_array, dtype=float)
-        return Rotation.from_quat(quats).as_matrix()[:, :, 0]   # col0 = normal
+        return Rotation.from_quat(quats).as_matrix()[:, :, 0]
 
     def _build_waypoints(self, obs: EnvState_t) -> np.ndarray:
         start = np.asarray(obs.pBLL, dtype=float)
@@ -88,7 +85,7 @@ class SplinePlanner(Planner):
 
         idx = int(np.atleast_1d(obs.pTLL_index).ravel()[0])
         normals_all = self._gate_normals(obs)
-        normals = normals_all[idx:]                  # match remaining gates
+        normals = normals_all[idx:]
 
         d = 0.6
         prev = start
@@ -97,7 +94,7 @@ class SplinePlanner(Planner):
             n = n / (np.linalg.norm(n) + 1e-9)
             if np.dot(c - prev, n) < 0:
                 n = -n
-            for offset in (-d, -d/2, 0.0, d/2, d):     # eq. 4, K=5
+            for offset in (-d, -d/2, 0.0, d/2, d):
                 wps.append(c + offset * n)
             prev = c + d * n
 
@@ -117,31 +114,30 @@ class SplinePlanner(Planner):
             return wps
         prelim = CubicSpline(s, wps, axis=0)
         n = max(50, int(s[-1] / 0.02))
-        pts = prelim(np.linspace(0.0, s[-1], n))      # dense samples
+        pts = prelim(np.linspace(0.0, s[-1], n))
 
-        for o in obstacles:                            # sequential, like the source
+        for o in obstacles:
             kept = []
             inside = False
             entry_i = None
             for i, p in enumerate(pts):
-                d_xy = np.linalg.norm(p[:2] - o[:2])   # eq. 13
+                d_xy = np.linalg.norm(p[:2] - o[:2])
                 if d_xy < safe:
                     if not inside:
                         inside, entry_i = True, i
-                    # inside points are dropped
                 else:
                     if inside:
                         inside = False
                         p_in, p_out = pts[entry_i], pts[i]
-                        e_in = p_in[:2] - o[:2]         # eq. 14
+                        e_in = p_in[:2] - o[:2]
                         e_out = p_out[:2] - o[:2]
-                        bis = e_in + e_out             # eq. 15
+                        bis = e_in + e_out
                         nb = np.linalg.norm(bis)
-                        if nb < 1e-3:                  # degenerate straight-through
-                            tv = p_out[:2] - p_in[:2]  # use travel-perpendicular
+                        if nb < 1e-3:
+                            tv = p_out[:2] - p_in[:2]
                             bis = np.array([-tv[1], tv[0]])
                             nb = np.linalg.norm(bis) + 1e-6
-                        new_xy = o[:2] + safe * bis / nb          # eq. 16
+                        new_xy = o[:2] + safe * bis / nb
                         new_z = (p_in[2] + p_out[2]) / 2
                         kept.append([new_xy[0], new_xy[1], new_z])
                     kept.append(p)

@@ -13,7 +13,8 @@ from lsy_drone_racing.control.planner import (
 __all__ = ["PointMassPlanner"]
 
 # Module-level constants.
-DEFAULT_THRUST = 1
+DEFAULT_THRUST = 10
+HORIZON = 2
 
 
 @dataclass
@@ -41,15 +42,17 @@ class PointMassPlanner(Planner):
     # Constructor
     def __init__(self, obs: EnvState_t, info: dict, config: dict, t_total: int,
                  thrust: float = DEFAULT_THRUST,
-                 max_speed: float = 1.0,
-                 samples_per_gate: int = 27) -> None:
-        super().__init__()
-        self.thrust = thrust
-        self.max_speed = max_speed
-        self.samples_per_gate = samples_per_gate
-        self._last_trajectory: Trajectory | None = None
-        self.t_total = t_total
-        self.freq = config.env.freq
+                 max_speed: float = 2.0,
+                 samples_per_gate: int = 27,
+                 horizon: int = HORIZON) -> None:
+            super().__init__()
+            self.thrust = thrust
+            self.max_speed = max_speed
+            self.samples_per_gate = samples_per_gate
+            self._last_trajectory: Trajectory | None = None
+            self.t_total = t_total
+            self.freq = config.env.freq
+            self.horizon = horizon
 
     @property
     def max_acceleration(self) -> float:
@@ -58,37 +61,7 @@ class PointMassPlanner(Planner):
 
     # Planner to be called in control
     def plan(self, obs: EnvState_t, time: float, info: dict | None = None) -> Trajectory:
-        gate_idx = obs.pTLL_index
-        if gate_idx < 0:
-            gate_idx = 0
-
-        gate_objs = []
-        for i in range(gate_idx, len(obs.qTLT_array)):
-            gate_objs.append(_Gate(obs.pTLL_array[i], R.from_quat(obs.qTLT_array[i]).as_euler("xyz")[2]))
-
-        start_node = _Node(obs.pTLL_index, obs.pBLL, obs.vBLL)
-
-        self.obsticles = obs.pOLL_array[:, :2]
-
-        # --- insert a detour waypoint to the right-back of the biting obstacle ---
-        if len(gate_objs) >= 2 and len(self.obsticles) > 0:
-            obstacle_xy = self.obsticles[1]          # hardcode the biting obstacle's index for now
-            detour_xy = self._detour_point(gate_objs[0], gate_objs[1], obstacle_xy)
-            toward_next = gate_objs[1].position[:2] - detour_xy
-            yaw_detour = np.arctan2(toward_next[1], toward_next[0])
-            detour_pos = np.array([detour_xy[0], detour_xy[1], gate_objs[1].position[2]])
-            gate_objs.insert(1, _Gate(detour_pos, yaw_detour))   # [gate0, detour, gate1, ...]
-        # ------------------------------------------------------------------------
-
-        self.gate_objs = gate_objs                   # set AFTER inserting the detour
-
-        print("gates:", obs.pTLL_array)
-        print("obstacles:", obs.pOLL_array)
-
-        columns = self._build_graph(start_node, gate_objs)
-        path = self._shortest_path(columns)
-
-        return self._build_trajectory(path, time)
+        return self._replan(obs, time, info=info)
 
     def reset(self) -> None:
         """Clear cached state between runs."""
@@ -113,26 +86,37 @@ class PointMassPlanner(Planner):
     @staticmethod
     def _solve_axis(p0: float, pf: float, v0: float, vf: float,
                     u_acc: float, u_brake: float) -> _AxisSolution | None:
-        
         if u_brake == 0.0 or u_acc == u_brake:
-            return None  # degenerate: division by zero below
+            return None
         a = 0.5 * u_acc * (1.0 - u_acc / u_brake)
         if a == 0.0:
             return None
         b = v0 - v0 * u_acc / u_brake
         c = (p0 - pf
-             + v0 * (vf - v0) / u_brake
-             + 0.5 * (vf - v0) ** 2 / u_brake)
+            + v0 * (vf - v0) / u_brake
+            + 0.5 * (vf - v0) ** 2 / u_brake)
         p = b / a
         q = c / a
         discriminant = (p / 2.0) ** 2 - q
         if discriminant < 0.0:
             return None
-        t1 = -p / 2.0 + np.sqrt(discriminant)
-        t2 = (vf - v0 - u_acc * t1) / u_brake
-        p1 = p0 + v0 * t1 + 0.5 * u_acc * t1 ** 2
-        v1 = v0 + u_acc * t1
-        return _AxisSolution(t1, t2, p1, v1, u_acc, u_brake)
+
+        root = np.sqrt(discriminant)
+        best = None
+        for t1 in (-p / 2.0 + root, -p / 2.0 - root):
+            if t1 < -1e-9:
+                continue                                  # negative accel phase -> invalid
+            t2 = (vf - v0 - u_acc * t1) / u_brake
+            if t2 < -1e-9:
+                continue                                  # negative brake phase -> invalid
+            cand = _AxisSolution(
+                t1, t2,
+                p0 + v0 * t1 + 0.5 * u_acc * t1 ** 2,      # p1
+                v0 + u_acc * t1,                           # v1
+                u_acc, u_brake)
+            if best is None or (t1 + t2) < (best.t1 + best.t2):
+                best = cand
+        return best
 
     # returns the maximum axis time from the computed axis
     def _synchronize_segment(self, p0, pf, v0, vf, u_acc, u_brake) -> float:
@@ -264,6 +248,32 @@ class PointMassPlanner(Planner):
                         cost[c + 1][r_b] = new_cost
                         prev[c + 1][r_b] = r_a
 
+        n_pole = n_post = n_solve = 0
+        for c in range(len(columns) - 1):
+            for r_a, node_a in enumerate(columns[c]):
+                if cost[c][r_a] == float("inf"):
+                    continue
+                for r_b, node_b in enumerate(columns[c + 1]):
+                    try:
+                        seg = self._segment_points(node_a, node_b)
+                    except PlanningError:
+                        n_solve += 1
+                        continue
+                    if not self._clearance(seg):
+                        n_pole += 1
+                        continue
+                    if not all(self._point_clear_of_gates(p) for p in seg):
+                        n_post += 1
+                        continue
+                    edge = self._segment_time(node_a, node_b)
+                    new_cost = cost[c][r_a] + edge
+                    if new_cost < cost[c + 1][r_b]:
+                        cost[c + 1][r_b] = new_cost
+                        prev[c + 1][r_b] = r_a
+
+        # after the loops, before reconstruction:
+        print(f"REJECTS pole={n_pole} post={n_post} solve={n_solve}", flush=True)
+
         # pick the cheapest path from the last nodes
         last = len(columns) - 1
         best_r = min(range(len(columns[last])), key=lambda r: cost[last][r])
@@ -294,6 +304,11 @@ class PointMassPlanner(Planner):
         angle_sharpness  : how aggressively speed drops with angle
         """
 
+        if len(path) < 2:
+            if self._last_trajectory is not None:
+                return self._last_trajectory
+            raise PlanningError("no feasible path found and no previous trajectory")
+
         u = self.max_acceleration
         u_acc = np.full(3, +u)
         u_brake = np.full(3, -u)
@@ -310,15 +325,25 @@ class PointMassPlanner(Planner):
             seg_axes.append(axes)
             seg_times.append(max(ax.t1 + ax.t2 for ax in axes))
 
-        rest_time = self.t_total - time
+        # sanity: reject a plan if any segment fails to reach its endpoint
+        for i in range(len(seg_axes)):
+            end_pos = np.array([self._evaluate_axis(seg_axes[i][j], path[i].position[j],
+                                                    path[i].velocity[j], seg_times[i])[0]
+                                for j in range(3)])
+            if np.linalg.norm(end_pos - path[i + 1].position) > 0.1:
+                if self._last_trajectory is not None:
+                    return self._last_trajectory
+                raise PlanningError("bad segment solve and no previous trajectory")
+
         seg_times = np.array(seg_times)
         seg_ratio = seg_times / seg_times.sum()
-        print('time',seg_times.sum())
 
-        n_samples = np.round(self.freq * rest_time).astype(int)
-
+        horizon_time = seg_times.sum()
+        n_samples = int(round(self.freq * horizon_time))
+        n_samples = max(n_samples, 2)
+        print("n_samples:", n_samples, flush=True)
         n_seg = np.round(seg_ratio * n_samples).astype(int)
-        #print(path)
+        n_seg = np.maximum(n_seg, 1)
         all_pos = []
         for i in range(len(seg_times)):
 
@@ -342,57 +367,18 @@ class PointMassPlanner(Planner):
 
         all_speed = np.append(all_speed, all_speed[-1:], axis=0)
 
-
-
         self._waypoints_vel = all_speed
         self._waypoints_pos = all_pos
-
-        #print(all_pos)
-
-        
-
-
-        #print('all_pos',len(all_pos))
-        #print('ts',ts, flush=True)
-        #print('segment times',seg_times, flush=True)
-        #print('segment times sum',seg_times.sum(), flush=True)
-        print('n_samples', n_samples, flush=True)
-        #print('n_seg',n_seg, flush=True)
+        # DEBUG
+        print("BUILD: len(path)=", len(path), "n_segments=", len(seg_times), flush=True)
 
         planner_dict = {
             "waypoints_pos": self._waypoints_pos,
             "waypoints_vel": self._waypoints_vel,
         }
-
-        # ---------------- DEBUG: find the discontinuity ----------------
-        print("=== TRAJECTORY DEBUG ===")
-        print("seg_times:", np.round(seg_times, 4))
-        print("n_seg:    ", n_seg, " (any 0 or 1 here = skipped segment = position jump)")
-        print("sum n_seg:", n_seg.sum(), " vs n_samples:", n_samples)
-
-        # walk the segment boundaries and measure the gap in position between
-        # the end of one segment's points and the start of the next
-        idx = 0
-        for i in range(len(n_seg)):
-            seg_end = idx + n_seg[i] - 1          # last point index of this segment
-            if i < len(n_seg) - 1 and n_seg[i] > 0 and n_seg[i+1] > 0:
-                p_end_this  = all_pos[seg_end]            # last point of segment i
-                p_start_next = all_pos[seg_end + 1]       # first point of segment i+1
-                pos_gap = np.linalg.norm(p_end_this - p_start_next)
-                # the planned join point (where they SHOULD meet) is path[i+1].position
-                planned = path[i+1].position
-                print(f"join {i}->{i+1}: pos gap = {pos_gap:.4f} m   "
-                    f"(end={np.round(p_end_this,3)}, next={np.round(p_start_next,3)}, "
-                    f"planned={np.round(planned,3)})")
-            idx += n_seg[i]
-
-        # velocity jumps: look at the size of consecutive velocity changes
-        dv = np.linalg.norm(np.diff(all_speed, axis=0), axis=1)
-        big = np.argsort(dv)[-5:]                  # the 5 biggest velocity jumps
-        print("biggest velocity jumps at indices:", np.sort(big))
-        print("their magnitudes:", np.round(dv[np.sort(big)], 3))
-        print("========================")
-        # ---------------- END DEBUG ----------------
+        self._last_trajectory = planner_dict
+        return planner_dict
+                
 
         return planner_dict
 
@@ -497,33 +483,50 @@ class PointMassPlanner(Planner):
         
         return np.array([1.3, 0.2])
 
-    def _replan(self, obs: EnvState_t, time: float, info: dict | None = None) -> Trajectory:
-        horizon = 2
+    def _replan(self, obs: EnvState_t, time: float,
+                info: dict | None = None) -> Trajectory:
         gate_idx = obs.pTLL_index
         if gate_idx < 0:
             gate_idx = 0
 
         gate_objs = []
         for i in range(gate_idx, len(obs.qTLT_array)):
-            gate_objs.append(_Gate(obs.pTLL_array[i], R.from_quat(obs.qTLT_array[i]).as_euler("xyz")[2]))
-
-        # keep only the next `horizon` gates
-        gate_objs = gate_objs[:horizon]
+            gate_objs.append(_Gate(obs.pTLL_array[i],
+                                    R.from_quat(obs.qTLT_array[i]).as_euler("xyz")[2]))
 
         start_node = _Node(gate_idx, obs.pBLL, obs.vBLL)
         self.obsticles = obs.pOLL_array[:, :2]
 
+        # 1. drop the first gate if we're basically on it
+        if len(gate_objs) >= 1:
+            dist_to_first = np.linalg.norm(obs.pBLL - gate_objs[0].position)
+            if dist_to_first < 0.2:
+                gate_objs = gate_objs[1:]
+
+        # 2. slice to horizon
+        gate_objs = gate_objs[:self.horizon]
+
+        # 3. insert detour only if the obstacle is actually in the current leg
         if len(gate_objs) >= 2 and len(self.obsticles) > 0:
+            a = gate_objs[0].position[:2]
+            b = gate_objs[1].position[:2]
             obstacle_xy = self.obsticles[1]
-            detour_xy = self._detour_point(gate_objs[0], gate_objs[1], obstacle_xy)
-            toward_next = gate_objs[1].position[:2] - detour_xy
-            yaw_detour = np.arctan2(toward_next[1], toward_next[0])
-            detour_pos = np.array([detour_xy[0], detour_xy[1], gate_objs[1].position[2]])
-            gate_objs.insert(1, _Gate(detour_pos, yaw_detour))
+
+            ab = b - a
+            t = np.clip(np.dot(obstacle_xy - a, ab) / (np.dot(ab, ab) + 1e-9), 0.0, 1.0)
+            closest = a + t * ab
+            dist_to_leg = np.linalg.norm(obstacle_xy - closest)
+
+            if dist_to_leg < 0.4:
+                detour_xy = self._detour_point(gate_objs[0], gate_objs[1], obstacle_xy)
+                toward_next = gate_objs[1].position[:2] - detour_xy
+                yaw_detour = np.arctan2(toward_next[1], toward_next[0])
+                z_mid = 0.5 * (gate_objs[0].position[2] + gate_objs[1].position[2])
+                detour_pos = np.array([detour_xy[0], detour_xy[1], z_mid])
+                gate_objs.insert(1, _Gate(detour_pos, yaw_detour))
 
         self.gate_objs = gate_objs
 
         columns = self._build_graph(start_node, gate_objs)
         path = self._shortest_path(columns)
-
         return self._build_trajectory(path, time)
