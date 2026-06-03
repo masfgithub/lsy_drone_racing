@@ -191,7 +191,6 @@ class DroneRacingPipeline(Controller):
             print('Replanned')
             self._tick_offset = self._tick
             return self._controller.control(env_states, info, self._tick_offset)
-
         return self._controller.control(env_states, info, self._tick_offset)
 
     def get_replan_reason(self, pTLL, pTLL_index, pOLL_array):
