@@ -95,6 +95,7 @@ class WedgeWindow:
         thickness: float,
         margin: float = 0.05,
     ):
+        """Initialize the WedgeWindow gate geometry."""
         self.position = np.asarray(position, dtype=float)
         self.quaternion = np.asarray(quaternion, dtype=float)
         self.quaternion /= np.linalg.norm(self.quaternion)
@@ -263,8 +264,15 @@ class WedgeWindow:
         # So the perp (y) DOES taper for T/B bars too, from hl to hw.
 
         def wedge_pen(
-            depth_coord, base_d, tip_d, ax_coord, h_ax, perp_coord, h_perp_base, h_perp_tip
-        ):
+            depth_coord: float,
+            base_d: float,
+            tip_d: float,
+            ax_coord: float,
+            h_ax: float,
+            perp_coord: float,
+            h_perp_base: float,
+            h_perp_tip: float,
+        ) -> MX:
             """Penalty for one wedge bar.
 
             depth_coord  : coordinate along depth axis (signed, base at base_d,
@@ -408,10 +416,12 @@ class WedgeWindow:
 
     @property
     def hole_centre_world(self) -> np.ndarray:
+        """Return the gate hole centre in world coordinates."""
         return self.position.copy()
 
     @property
     def z_top_world(self) -> float:
+        """Return the world-frame z-coordinate of the gate top."""
         return float(self.position[2] + self.hh)
 
     # ------------------------------------------------------------------
@@ -425,10 +435,18 @@ class WedgeWindow:
         def to_world(pts: np.ndarray) -> np.ndarray:
             return self.position + (self.R.T @ pts.T).T
 
-        def draw_prism(base_d, tip_d, depth_idx, ax_idx, perp_idx, h_perp_base, h_perp_tip):
+        def draw_prism(
+            base_d: float,
+            tip_d: float,
+            depth_idx: int,
+            ax_idx: int,
+            perp_idx: int,
+            h_perp_base: float,
+            h_perp_tip: float,
+        ) -> None:
             """Draw one wedge prism (6 vertices, 5 faces)."""
 
-            def v(d, xv, perpv):
+            def v(d: float, xv: float, perpv: float) -> np.ndarray:
                 pt = np.zeros(3)
                 pt[depth_idx] = d
                 pt[ax_idx] = xv

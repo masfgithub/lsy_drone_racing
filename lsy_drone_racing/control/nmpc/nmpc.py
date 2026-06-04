@@ -259,7 +259,7 @@ class NMPC(ControllerInterface):
     def get_predicted_traj(self) -> np.ndarray:
         """Return predicted position trajectory for the whole horizon."""
         return np.array([self._acados_ocp_solver.get(k, "x")[:3] for k in range(self._N + 1)])
-    
+
     def get_ref_traj(self) -> np.ndarray:
         """Return reference trajectory for the whole horizon."""
         i = min(self._tick, self._tick_max)
