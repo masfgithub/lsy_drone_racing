@@ -107,3 +107,14 @@ class ControllerInterface(ABC):
             TBD: for Ruff.
         """
         return
+
+    def get_ref_traj(self):
+        """TBD: for Ruff.
+
+        Args:
+            TBD: for Ruff.
+
+        Returns:
+            TBD: for Ruff.
+        """
+        return

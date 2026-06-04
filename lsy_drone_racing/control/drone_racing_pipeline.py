@@ -8,7 +8,7 @@ from __future__ import annotations  # Python 3.10 type hints
 from typing import TYPE_CHECKING
 
 import numpy as np
-from crazyflow.sim.visualize import draw_capsule, draw_line
+from crazyflow.sim.visualize import draw_capsule, draw_line, draw_points
 
 from lsy_drone_racing.control.basic_planner import BasicPlanner
 from lsy_drone_racing.control.controller import Controller
@@ -192,8 +192,15 @@ class DroneRacingPipeline(Controller):
         """Visualize the desired trajectory, setpoint, gates and obstacles."""
         trajectory = self._planner.get_pos_traj()
         draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
-        trajectory = self._controller.get_predicted_traj()
-        draw_line(sim, trajectory, rgba=np.array([0.58, 0.0, 0.83, 1.0]))
+        pred_trajectory = self._controller.get_predicted_traj()
+        ref_trajectory = self._controller.get_ref_traj()
+        #draw_line(sim, trajectory, rgba=np.array([0.58, 0.0, 0.83, 1.0]))
+
+        for p in pred_trajectory:
+            draw_points(sim, p.reshape(1, -1), rgba=(0.58, 0.0, 0.83, 0.5), size=0.01)
+
+        for p in ref_trajectory:
+            draw_points(sim, p.reshape(1, -1), rgba=(1.0, 0.0, 0.0, 0.5), size=0.01)
 
         for gate in self._controller._gates:
             _draw_wedge_gate(
