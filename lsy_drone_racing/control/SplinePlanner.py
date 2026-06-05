@@ -19,7 +19,7 @@ class SplinePlanner(Planner):
         self.config = config
         self._t_total = float(t_total)
         self.max_speed = float(max_speed)
-        self.freq = config.env.freq 
+        self.freq = config.env.freq
         self._speed = None
         
         self.clearance = 0.3

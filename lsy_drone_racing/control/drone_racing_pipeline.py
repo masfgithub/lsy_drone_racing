@@ -15,8 +15,7 @@ from lsy_drone_racing.control.basic_planner import BasicPlanner
 from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.nmpc.nmpc import NMPC
-from lsy_drone_racing.control.PointMassPlanner import PointMassPlanner
-from lsy_drone_racing.control.SplinePlanner import SplinePlanner
+from lsy_drone_racing.control.SplinePlanner_2 import SplinePlanner
 
 if TYPE_CHECKING:
     from crazyflow import Sim
@@ -169,7 +168,7 @@ class DroneRacingPipeline(Controller):
         self._planner = SplinePlanner(env_states, info, config,
                                       t_total, max_speed=2.0)
 
-        planner_dict = self._planner.plan(env_states, info, config)
+        planner_dict = self._planner.plan(env_states, info, config, 0.0)
         self._controller = NMPC(env_states, planner_dict, info, config, t_total, use_soft=True)
         self._setpoint = env_states.pBLL.copy()
 
@@ -186,8 +185,8 @@ class DroneRacingPipeline(Controller):
                                   env_states.pOLL_array) == True:
             self.nominal_gates_position = env_states.pTLL_array
             self.nominal_obstacles_position = env_states.pOLL_array
-            planner_dict = self._planner.replan(env_states, self._tick / self._freq)
-            self._controller.set_ref_traj(planner_dict)
+            #planner_dict = self._planner.replan(env_states, self._tick / self._freq)
+            #self._controller.set_ref_traj(planner_dict)
             print('Replanned')
             self._tick_offset = self._tick
             return self._controller.control(env_states, info, self._tick_offset)
