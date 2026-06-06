@@ -18,7 +18,7 @@ __all__ = ["Trajectory", "Planner", "DEFAULT_MAX_SPEED"]
 DEFAULT_MAX_SPEED = 12.0  # m/s
 FRAME_WIDTH = 0.72
 FRAME_OPENING = 0.4
-FRAME_THICK = 0.01
+FRAME_THICK = 0.1
 CLEARANCE = 0.1
 
 
@@ -63,7 +63,12 @@ class Planner(ABC):
         }
 
     @abstractmethod
-    def plan(self, obs: EnvState_t, info: dict, config: dict) -> Trajectory:
+    def plan(
+        self,
+        obs: EnvState_t,
+        info: dict,
+        config: dict
+    ) -> Trajectory:
         """Compute a trajectory through the gates. Subclasses must implement.
 
         Args:
@@ -74,14 +79,6 @@ class Planner(ABC):
         Returns:
             trajectory:         pos, vel, time in a trajectory class.
         """
-        self._gates_information = {
-            "total_length": 0.72,
-            "total_height": 0.72,
-            "hole_width": 0.25,
-            "hole_height": 0.25,
-            "thickness": 0.3,
-            "margin": 0.05,
-        }
 
     def _gate(
             self,
@@ -99,31 +96,36 @@ class Planner(ABC):
         """
         # Quaternion of gate frames
         qTLT = obs.qTLT_array
+        pTLL_index = obs.pTLL_index
         
         # Extracted rotation matrix/Euler angles from the quaternion
-        y_GBL_array = R.from_quat(qTLT).as_euler('ZYX')[:, 0]
+        y_GBL_array = R.from_quat(qTLT[pTLL_index:]).as_euler('ZYX')[:, 0]
 
         # Centre position of gate frames
-        pGLL_array = obs.pTLL_array
+        pGLL_array = obs.pTLL_array[pTLL_index:]
 
         return pGLL_array, y_GBL_array
     
-    def check_gate(
+    def _check_gate(
         self, 
-        p_ref_LL: np.ndarray, 
+        p_ref_LL: np.array, 
         pGLL_array: np.ndarray, 
         y_GBL_array: np.ndarray
-    ) -> tuple[bool, np.ndarray]:
+    ) -> tuple[bool, np.ndarray | None, np.ndarray | None, float | None, float | None]:
         """Checks if a trajectory point is colliding with any gate frame.
         
         Args:
-            p_ref_LL:    Trajectory point to check.
-            pGLL_array:  Center positions of all gates.
-            y_GBL_array: Yaws of all the gates.
+            p_ref_LL:           Trajectory point to check.
+            pGLL_array:         Center positions of all gates.
+            y_GBL_array:        Yaws of all the gates.
 
         Returns:
-            is_inside_frame: True if the point is colliding with a gate's solid frame structure.
-            d_G:             Distance from the point to clear the gate frame of each gate.
+            is_inside_frame:    True if the point is colliding with a gate's solid frame structure.
+            centre:             Centre of the gate that's been violated.
+            local:              Distance from the point to the centre of the violated gate.
+            yaw:                Yaw of the violated gate.
+            half_outer:         Outer distance of the gate frame.
+
         """
         # Half-dimensions including clearance margins
         half_outer = (FRAME_WIDTH / 2) + CLEARANCE
@@ -147,16 +149,20 @@ class Planner(ABC):
         gate_collisions = in_depth & in_outer & ~in_open
         is_inside_frame = bool(np.any(gate_collisions))
 
-        # Used to check which Gate is not cleared
-        d_G = ly
+        if not is_inside_frame:
+            return False, None, None, None, None
 
-        return is_inside_frame, d_G
+        g = int(np.argmax(gate_collisions))
+        centre = pGLL_array[g]
+        local = np.array([lx[g], ly[g], lz[g]])
+        yaw = y_GBL_array[g]
+        return True, centre, local, yaw, half_outer
     
-    def check_obsticle(
+    def _check_obsticle(
             self,
             p_ref_LL: np.array,
             pOLL_array: np.ndarray
-    ) -> tuple[bool, np.ndarray]:
+    ) -> tuple[bool, np.ndarray|None, float|None]:
         """Checks if a trajectory point is inside an obsticle.
         
         Args:
@@ -168,7 +174,7 @@ class Planner(ABC):
             d_O:                    Distance the point needs to clear the obsticle.
         """
         # Hardcoded physical pillar radius + safety margin (match to your env configuration)
-        r_obstacle = 0.15 + self.clearance
+        r_obstacle = 0.15 + CLEARANCE
 
         # consider only x and y coordinates because it is a pillar
         p_ref_xy = p_ref_LL[0:2]
@@ -184,10 +190,12 @@ class Planner(ABC):
         obstacle_collisions = distances_xy < r_obstacle
         is_inside_obstacle = bool(np.any(obstacle_collisions))
 
-        # Give distance between point and radius so the planner knows in which direction to clear
-        # the gate
-        d_O = diff_xy
-        return is_inside_obstacle, d_O
+        if not is_inside_obstacle:
+            return False, None, None
+        
+        # Return obsticle centre of violation and push for the detour point
+        o = int(np.argmin(distances_xy))
+        return True, pOLL_array[o, :2], r_obstacle
     
     def get_pos_traj(self) -> np.ndarray:
         """TBD: for Ruff.
