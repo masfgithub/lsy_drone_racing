@@ -5,20 +5,18 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.interpolate import CubicSpline
-from scipy.interpolate import interp1d
-from lsy_drone_racing.control.planner import (
-    Planner, Trajectory, FRAME_WIDTH, CLEARANCE,
-)
+
+from lsy_drone_racing.control.planner import CLEARANCE, FRAME_WIDTH, Planner, Trajectory
+
 _MAX_AVOID_ITER = 6     # re-check loop cap
 _OBST_RADIUS    = 0.15  # pillar radius (m), matches _check_obsticle
 _SAMPLE_DS      = 0.03  # collision-check spacing (m)
 _LEAD = 0
-_MAX_GATE_ITER = 20
-_GATE_OFFSET = 0.5 
+_MAX_GATE_ITER = 2
+_GATE_OFFSET = 0.5
 
 if TYPE_CHECKING:
     from lsy_drone_racing.control.env_obs import EnvState_t
-from lsy_drone_racing.control.planner import Planner, Trajectory
 
 
 class SplinePlanner(Planner):
@@ -94,14 +92,26 @@ class SplinePlanner(Planner):
 
         # Parameter defined to set helping points in front and behind the gates
         Distance = 0.6
+        lead_dist = 0.25
 
         # Create waypoint matrix
         p_WLL_array = pDLL
 
+        x, y, z, w = obs.qBLB
+        fwd = np.array([
+            1 - 2 * (y * y + z * z),
+            2 * (x * y + z * w),
+            0.0,
+        ])
+        nf = np.linalg.norm(fwd)
+        if nf > 1e-6:
+            lead = pDLL + lead_dist * (fwd / nf)
+            #p_WLL_array = np.vstack([p_WLL_array, lead])
+
         pPrevLL = np.zeros(3)
         pNextLL = np.zeros(3)
 
-        bool_prev_waypoint = np.linalg.norm(pDLL - pGLL_array[0]) > Distance
+        bool_prev_waypoint = np.linalg.norm(pDLL - pGLL_array[0]) > 1.2*Distance
 
         for i in range(len(pGLL_array)):
             if (i == 0)&(bool_prev_waypoint):
@@ -119,7 +129,8 @@ class SplinePlanner(Planner):
 
             p_WLL_array = np.vstack([p_WLL_array, pNextLL])
         
-        p_WLL_array = self._detour_gates(obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed)
+        print('waypoints before detour:', p_WLL_array)
+        p_WLL_array = self._detour_gates1(obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed)
 
         p_WLL_array = self._avoid_hindrance(obs, pGLL_array, y_GBL_array, p_WLL_array, t_elapsed)
 
@@ -365,9 +376,9 @@ class SplinePlanner(Planner):
 
         Returns:
             new_p_WLL_array:        Total waypoints.
-            """
+        """
         detours = []
-        base_push = FRAME_WIDTH / 2 + CLEARANCE
+        base_push = FRAME_WIDTH / 2 + CLEARANCE*2
 
         for _ in range(_MAX_GATE_ITER):
             wps = self._assemble_with_detours(p_WLL_array, detours)
@@ -385,7 +396,7 @@ class SplinePlanner(Planner):
                 is_hit, c, local, yaw, push = self._check_gate(p, pGLL_array, y_GBL_array)
                 if is_hit:
                     n_passed = int(np.searchsorted(t_wps, t_dense[i]))
-                    d = self._push_dir_frame(local, yaw)
+                    d = self._push_dir_frame1(local, yaw)
                     detour = c + base_push * d
                     detours.append((n_passed, detour))
                     hit = True
@@ -394,7 +405,7 @@ class SplinePlanner(Planner):
             if not hit:
                 return wps
             
-            new_p_WLL_array = self._assemble_with_detours(p_WLL_array, detours)
+            new_p_WLL_array = self._assemble_with_detours1(p_WLL_array, detours)
 
         return new_p_WLL_array
 
@@ -412,7 +423,7 @@ class SplinePlanner(Planner):
 
         Returns:
             new_p_WLL_array:        New waypoints with detour inserterted.
-            """
+        """
         wps = list(p_WLL_array)
         for idx, pt in sorted(detours, key=lambda x: x[0], reverse=True):
             wps.insert(idx, pt)
@@ -433,7 +444,7 @@ class SplinePlanner(Planner):
 
         Returns:
             push_dir:           Direction the point needs to be pushed to clear the gate frame.
-            """
+        """
         lx, ly, lz = local
         half = FRAME_WIDTH / 2
         d = [half - ly, half + ly, half - lz, half + lz]
@@ -473,7 +484,8 @@ class SplinePlanner(Planner):
 
         Returns:
             new_p_WLL_array:        Total waypoints.
-            """
+        """
+        pOLL_array = obs.pOLL_array
         detours = []
         base_push = FRAME_WIDTH / 2 + CLEARANCE
 
@@ -495,16 +507,98 @@ class SplinePlanner(Planner):
                     n_passed = int(np.searchsorted(t_wps, t_dense[i]))
                     d = self._push_dir_frame(local, yaw)
                     detour = c + base_push * d
+                    print('gatedetour', detour)
                     detours.append((n_passed, detour))
                     hit = True
                     break
+
+            entry_c = None
+            entry_push = None
+            inside = False
+            entry_i = None
+            for i, p in enumerate(pts):
+                is_hit_obst, c_obst, push_obst = self._check_obsticle(p, pOLL_array)
+                if is_hit_obst:
+                    if not inside:
+                        inside = True
+                        entry_i = i
+                        entry_c = c_obst
+                        entry_push = push_obst
+                    continue
+
+                if inside:
+                    inside = False
+                    p_in, p_out = pts[entry_i], p
+                    
+                    # 2D radial push around obsticle
+                    bis = (p_in[:2] - entry_c) + (p_out[:2] - entry_c)
+                    nb = np.linalg.norm(bis)
+                    if nb < 1e-6:        # tangent pass
+                        tv = p_out[:2] - p_in[:2]
+                        bis = np.array([-tv[1], tv[0]]); nb = np.linalg.norm(bis) + 1e-9
+                    new_xy = entry_c + entry_push * bis / nb
+                    new_waypoint = np.array([new_xy[0], new_xy[1], 0.5 * (p_in[2] + p_out[2])])
+                    obst_detours = self._obstacle_waypoints(new_waypoint, entry_i, i, pts, wps, t_wps, t_dense)
+                    print(obst_detours)
+                    detours.extend(obst_detours)
+                    hit = True
+                    break
+
 
             if not hit:
                 return wps
             
             new_p_WLL_array = self._assemble_with_detours(p_WLL_array, detours)
 
+            print(new_p_WLL_array)
+
         return new_p_WLL_array
+    
+    def _obstacle_waypoints(self, new_waypoint, entry_i, exit_i,
+                        pts, wps, t_wps, t_dense, shoulder_dist=0.3):
+        """Build 3 detour waypoints around an obstacle: the apex, plus a back shoulder
+        placed `shoulder_dist` from the apex TOWARD the previous waypoint, and a front
+        shoulder `shoulder_dist` from the apex TOWARD the next waypoint.
+
+        Args:
+            new_waypoint:  the apex (already pushed perpendicular out), 3D.
+            entry_i, exit_i: dense-sample indices where the path enters/leaves the obstacle.
+            pts:           dense spline samples.
+            wps:           current waypoint list (the gate points etc.).
+            t_wps:         arc-length parameter of each current waypoint.
+            t_dense:       parameter of each dense sample.
+            shoulder_dist: how far from the apex to place each shoulder, in meters.
+        """
+        apex = np.asarray(new_waypoint, dtype=float)
+        wps = np.asarray(wps, dtype=float)
+
+        # parameter at the middle of the crossing -> find the flanking waypoints
+        t_mid = 0.5 * (t_dense[entry_i] + t_dense[exit_i])
+        idx_apex = int(np.searchsorted(t_wps, t_mid, side="right"))
+        i_prev = max(0, idx_apex - 1)
+        i_next = min(len(wps) - 1, idx_apex)
+        wp_prev = wps[i_prev]                 # gate point before the obstacle
+        wp_next = wps[i_next]                 # gate point after the obstacle
+
+        def toward(target):
+            """Unit direction from apex toward a target waypoint (full 3D)."""
+            v = target - apex
+            n = np.linalg.norm(v)
+            if n < 1e-6:
+                return np.zeros(3)
+            return v / n
+
+        sh_back = apex + shoulder_dist * toward(wp_prev)    # toward previous gate point
+        sh_front = apex + shoulder_dist * toward(wp_next)   # toward next gate point
+
+        idx_back = int(np.searchsorted(t_wps, t_dense[entry_i], side="right"))
+        idx_front = int(np.searchsorted(t_wps, t_dense[exit_i], side="right"))
+
+        return [
+            (idx_back, sh_back),
+            (idx_apex, apex),
+            (idx_front, sh_front),
+        ]
 
 
     def _assemble_with_detours(
@@ -520,7 +614,7 @@ class SplinePlanner(Planner):
 
         Returns:
             new_p_WLL_array:        New waypoints with detour inserterted.
-            """
+        """
         wps = list(p_WLL_array)
         for idx, pt in sorted(detours, key=lambda x: x[0], reverse=True):
             wps.insert(idx, pt)
@@ -541,7 +635,7 @@ class SplinePlanner(Planner):
 
         Returns:
             push_dir:           Direction the point needs to be pushed to clear the gate frame.
-            """
+        """
         lx, ly, lz = local
         half = FRAME_WIDTH / 2
         d = [half - ly, half + ly, half - lz, half + lz]

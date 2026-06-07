@@ -154,7 +154,7 @@ class DroneRacingPipeline(Controller):
         """Initialize the pipeline."""
         super().__init__(obs, info, config)
 
-        t_total = 14
+        t_total = 12
         env_states = extract_env_states(obs)
         self.nominal_gates_position = env_states.pTLL_array
         self.nominal_obstacles_position = env_states.pOLL_array
@@ -168,7 +168,7 @@ class DroneRacingPipeline(Controller):
         self._planner = SplinePlanner(env_states, info, config,
                                       t_total, max_speed=2.0)
 
-        planner_dict = self._planner.plan(env_states, info, config, 0.0)
+        planner_dict = self._planner.plan(env_states, 0.0)
         self._controller = NMPC(env_states, planner_dict, info, config, t_total, use_soft=True)
         self._setpoint = env_states.pBLL.copy()
 
@@ -185,8 +185,8 @@ class DroneRacingPipeline(Controller):
                                   env_states.pOLL_array) == True:
             self.nominal_gates_position = env_states.pTLL_array
             self.nominal_obstacles_position = env_states.pOLL_array
-            #planner_dict = self._planner.replan(env_states, self._tick / self._freq)
-            #self._controller.set_ref_traj(planner_dict)
+            planner_dict = self._planner.plan(env_states, self._tick / self._freq)
+            self._controller.set_ref_traj(planner_dict)
             print('Replanned')
             self._tick_offset = self._tick
             return self._controller.control(env_states, info, self._tick_offset)
