@@ -122,14 +122,15 @@ class SplinePlanner(Planner):
                 p_WLL_array = np.vstack([p_WLL_array, pPrevLL])
 
             p_WLL_array = np.vstack([p_WLL_array, pGLL_array[i]])
-            
+            if i == len(pGLL_array):
+                Distance = 2*Distance
             pNextLL[0] = pGLL_array[i,0] + Distance*np.cos(y_GBL_array[i])
             pNextLL[1] = pGLL_array[i,1] + Distance*np.sin(y_GBL_array[i])
             pNextLL[2] = pGLL_array[i,2]
 
             p_WLL_array = np.vstack([p_WLL_array, pNextLL])
         
-        print('waypoints before detour:', p_WLL_array)
+        #print('waypoints before detour:', p_WLL_array)
         p_WLL_array = self._detour_gates1(obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed)
 
         p_WLL_array = self._avoid_hindrance(obs, pGLL_array, y_GBL_array, p_WLL_array, t_elapsed)
