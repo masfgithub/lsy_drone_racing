@@ -56,11 +56,11 @@ class NMPC(ControllerInterface):
         self.drone_params = load_params("so_rpy", config.sim.drone_model)
 
         self._gates_information = {
-            "total_length": 0.72,
-            "total_height": 0.72,
-            "hole_width": 0.25,
-            "hole_height": 0.25,
-            "thickness": 0.3,
+            "total_length": 0.8,
+            "total_height": 0.8,
+            "hole_width": 0.23,
+            "hole_height": 0.23,
+            "thickness": 0.35,
             "margin": 0.05,
         }
         self._obstacles_information = {"d_min": 0.15, "total_height": 2.0}
@@ -259,3 +259,8 @@ class NMPC(ControllerInterface):
     def get_predicted_traj(self) -> np.ndarray:
         """Return predicted position trajectory for the whole horizon."""
         return np.array([self._acados_ocp_solver.get(k, "x")[:3] for k in range(self._N + 1)])
+
+    def get_ref_traj(self) -> np.ndarray:
+        """Return reference trajectory for the whole horizon."""
+        i = min(self._tick, self._tick_max)
+        return self._waypoints_pos[i : i + self._N + 1]
