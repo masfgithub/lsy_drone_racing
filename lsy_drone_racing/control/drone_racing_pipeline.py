@@ -11,9 +11,15 @@ import numpy as np
 from crazyflow.sim.visualize import draw_capsule, draw_line, draw_points
 
 from lsy_drone_racing.control.basic_planner import BasicPlanner
+from lsy_drone_racing.control.basic_planner_mpccpp import BasicPlannerMPCCpp
 from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
+from lsy_drone_racing.control.mpcc.mpcc import MPCC
+from lsy_drone_racing.control.mpcc.mpccpp import MPCCpp
 from lsy_drone_racing.control.nmpc.nmpc import NMPC
+
+# Active controller: "mpccpp" | "mpcc" | "nmpc"
+CONTROLLER_TYPE = "mpccpp"
 
 if TYPE_CHECKING:
     from crazyflow import Sim
@@ -129,6 +135,66 @@ def _draw_wedge_gate(
     # Bottom: base at -hh, tip at -hho
     draw_prism(-hh, -hho, depth_idx=2, ax_idx=0, perp_idx=1, h_perp_base=hl, h_perp_tip=hw)
 
+def _draw_mpccpp_tunnel(
+    sim: Sim,
+    controller,
+    ring_rgba: NDArray | None = None,
+    corner_rgba: NDArray | None = None,
+):
+    """Draw the MPCC++ prediction tunnel: the rectangular cross-section at every
+    predicted horizon node (4 corners + 4 edges) plus the longitudinal rails.
+
+    Cross-section at progress theta: centre ref.eval(theta), spanned by the
+    tunnel frame (n, b) = ref.frame(theta) with half-extents (W, H) =
+    ref.width(theta) -- exactly the prism enforced by the tunnel constraint.
+    """
+    if sim.viewer is None:
+        return
+    ref = getattr(controller, "_ref", None)
+    if ref is None:
+        return
+
+    # per-node progress: solved theta state (index 14), aligned with the
+    # predicted trajectory; fall back to the controller's theta_pred guess.
+    if getattr(controller, "_x_warm", None):
+        thetas = [float(x[14]) for x in controller._x_warm]
+    elif getattr(controller, "_theta_pred", None) is not None:
+        thetas = [float(t) for t in controller._theta_pred]
+    else:
+        return
+
+    if ring_rgba is None:
+        ring_rgba = np.array([0.1, 0.85, 0.95, 0.6])      # cyan edges
+    if corner_rgba is None:
+        corner_rgba = np.array([1.0, 0.9, 0.0, 0.9])      # yellow corners
+
+    # corners[k] = 4x3, order (+n+b, -n+b, -n-b, +n-b)
+    corners = []
+    for th in thetas:
+        pd = np.asarray(ref.eval(th), dtype=float)
+        n, b = ref.frame(th)
+        W, H = ref.width(th)
+        n = np.asarray(n, float); b = np.asarray(b, float)
+        corners.append(np.array([
+            pd + W * n + H * b,
+            pd - W * n + H * b,
+            pd - W * n - H * b,
+            pd + W * n - H * b,
+        ]))
+    corners = np.array(corners)                 # (K, 4, 3)
+
+    # cross-section rectangle (4 edges) at every prediction node
+    for k in range(len(corners)):
+        ring = np.vstack([corners[k], corners[k, 0]])     # closed (5,3)
+        draw_line(sim, ring, rgba=ring_rgba)
+
+    # longitudinal rails connecting node k -> k+1 along each corner
+    for cidx in range(4):
+        draw_line(sim, corners[:, cidx, :], rgba=ring_rgba)
+
+    # corner markers
+    draw_points(sim, corners.reshape(-1, 3), rgba=corner_rgba, size=0.02)
+
 
 def _draw_cylinder_obstacle(
     sim: Sim, position: NDArray, height: float, radius: float, rgba: NDArray | None = None
@@ -153,8 +219,19 @@ def _draw_cylinder_obstacle(
     )
 
 
+def _draw_tunnel_centerline(sim: Sim, ref, n: int = 150, rgba: NDArray | None = None):
+    """Draw the MPCC++ tunnel centerline as a sequence of line segments."""
+    if sim.viewer is None:
+        return
+    if rgba is None:
+        rgba = np.array([1.0, 0.8, 0.0, 0.8])
+    s_vals = np.linspace(0.0, ref.length, n)
+    pts = np.array([ref.eval(float(s)) for s in s_vals])
+    draw_line(sim, pts, rgba=rgba)
+
+
 class DroneRacingPipeline(Controller):
-    """This class handles the pipeline for the drone racing. It includes planning and control."""
+    """Pipeline for drone racing: planner + controller, supporting MPCC++/MPCC/NMPC."""
 
     def __init__(self, obs: dict[str, NDArray[np.floating]], info: dict, config: dict):
         """Initialize the pipeline."""
@@ -165,9 +242,28 @@ class DroneRacingPipeline(Controller):
         self._tick = 0
         self._finished = False
 
-        self._planner = BasicPlanner(config, t_total)
-        planner_dict = self._planner.plan()
-        self._controller = NMPC(env_states, planner_dict, info, config, t_total, use_soft=True)
+        if CONTROLLER_TYPE == "mpccpp":
+            self._planner = BasicPlannerMPCCpp(env_states, config, t_total)
+            planner_dict = self._planner.plan()
+            self._controller = MPCCpp(env_states, planner_dict, info, config, t_total)
+
+        elif CONTROLLER_TYPE == "mpcc":
+            self._planner = BasicPlanner(config, t_total)
+            planner_dict = self._planner.plan()
+            self._controller = MPCC(env_states, planner_dict, info, config, t_total)
+
+        elif CONTROLLER_TYPE == "nmpc":
+            self._planner = BasicPlanner(config, t_total)
+            planner_dict = self._planner.plan()
+            self._controller = NMPC(
+                env_states, planner_dict, info, config, t_total, use_soft=True
+            )
+
+        else:
+            raise ValueError(
+                f"Unknown CONTROLLER_TYPE '{CONTROLLER_TYPE}'. "
+                "Choose 'mpccpp', 'mpcc', or 'nmpc'."
+            )
 
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
@@ -194,22 +290,33 @@ class DroneRacingPipeline(Controller):
     def episode_callback(self):
         """Reset the integral error."""
         self._tick = 0
+        self._controller.reset()
         self._controller.set_tick(self._tick)
 
     def render_callback(self, sim: Sim):
-        """Visualize the desired trajectory, setpoint, gates and obstacles."""
+        """Visualize the planned path, MPC predictions, gates, and obstacles."""
+        # Planned path (green)
         trajectory = self._planner.get_pos_traj()
         draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
-        pred_trajectory = self._controller.get_predicted_traj()
-        ref_trajectory = self._controller.get_ref_traj()
-        # draw_line(sim, trajectory, rgba=np.array([0.58, 0.0, 0.83, 1.0]))
 
+        # Tunnel centerline for MPCC++ (yellow)
+        #if CONTROLLER_TYPE == "mpccpp":
+        #    _draw_tunnel_centerline(sim, self._controller._ref)
+
+        # MPC predicted trajectory (purple dots)
+        pred_trajectory = self._controller.get_predicted_traj()
         for p in pred_trajectory:
             draw_points(sim, p.reshape(1, -1), rgba=(0.58, 0.0, 0.83, 0.5), size=0.01)
 
-        for p in ref_trajectory:
-            draw_points(sim, p.reshape(1, -1), rgba=(1.0, 0.0, 0.0, 0.5), size=0.01)
+        # MPCC++ prediction tunnel (cyan edges + yellow corners)
+        if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):
+            _draw_mpccpp_tunnel(sim, self._controller)
+        # Reference trajectory (red dots)
+        #ref_trajectory = self._controller.get_ref_traj()
+        #for p in ref_trajectory:
+        #    draw_points(sim, p.reshape(1, -1), rgba=(1.0, 0.0, 0.0, 0.5), size=0.01)
 
+        # Gates
         for gate in self._controller._gates:
             _draw_wedge_gate(
                 sim,
@@ -223,6 +330,7 @@ class DroneRacingPipeline(Controller):
                 rgba=np.array([0.0, 0.5, 1.0, 1.0]),
             )
 
+        # Obstacles
         for obs in self._controller._obstacles:
             _draw_cylinder_obstacle(
                 sim,
