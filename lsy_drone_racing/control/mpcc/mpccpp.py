@@ -205,9 +205,9 @@ def _build_spline_tunnel_ref(
     H_nom: float,
     tunnel_sigma: float,
     frame_up: tuple = (0.0, 0.0, 1.0),
-    qc_nom: float = 1.0,
-    qc_gate: float = 120.0,
-    gate_sigma: float = 0.8,
+    qc_nom: float = 0.0,
+    qc_gate: float = 1.0,
+    gate_sigma: float = 0.4,
     n_arc: int = 10000,
 ) -> SplineTunnelReference:
     """Build a SplineTunnelReference from the planner spline and the gate poses.
@@ -223,7 +223,10 @@ def _build_spline_tunnel_ref(
         H_nom:           Nominal tunnel half-height between gates (m).
         tunnel_sigma:    Gaussian sigma for the tunnel pinch (arc-length, m).
         frame_up:        World up-vector for gate lateral/vertical axes.
-        qc_nom/qc_gate:  Baseline / peak contour-weight multipliers.
+        qc_nom/qc_gate:  Gate-proximity bump that scales q_*_peak / w_speed_gate.
+                         Must be a 0..1 multiplier (qc_nom=0 away, qc_gate~1 at a
+                         gate) -- NOT a raw contour weight. The cost already holds
+                         the magnitudes in q_lag_peak / q_contour_peak / w_speed_gate.
         gate_sigma:      Gaussian sigma for the qc bump (arc-length, m).
         n_arc:           Samples used to reparameterize the spline to arc length.
 
@@ -286,7 +289,7 @@ class MPCCpp(ControllerInterface):
         t_total: int,
         N_horizon: int = 20,
         T_horizon: float = 0.5,
-        mu: float = 1000.0,
+        mu: float = 15.0,
         q_lag: float = 80.0,
         q_lag_peak: float = 500.0,
         q_contour: float = 120.0,
@@ -300,7 +303,9 @@ class MPCCpp(ControllerInterface):
         W_nom: float = 0.3,
         H_nom: float = 0.3,
         tunnel_sigma: float = 0.4,
-        v_theta_max: float = 5.0,
+        v_theta_max: float = 3.0,
+        qc_gate: float = 1.0,
+        gate_sigma: float = 0.4,
         tunnel_soft: bool = True,
         tunnel_slack_lin: float = 1e3,
         tunnel_slack_quad: float = 1e3,
@@ -335,6 +340,11 @@ class MPCCpp(ControllerInterface):
             tunnel_sigma:       Gaussian sigma for tunnel pinch at gates (m arc-length).
             v_theta_max:        Max progress speed v_theta (m/s of arc length). Must
                                 exceed the drone's along-track speed or theta lags.
+            qc_gate:            Peak of the gate-proximity bump (0..1) that scales the
+                                near-gate tracking weights and the gate speed penalty.
+                                Raise to slow/tighten more at gates, lower to fly faster.
+            gate_sigma:         Arc-length width (m) of that bump. Keep below ~half the
+                                gate spacing so bumps don't overlap and brake everywhere.
             tunnel_soft:        If True, soften tunnel constraints via slacks.
             tunnel_slack_lin:   Linear slack penalty for tunnel.
             tunnel_slack_quad:  Quadratic slack penalty for tunnel.
@@ -395,6 +405,7 @@ class MPCCpp(ControllerInterface):
             gate_w_half=self._gates_information["hole_width"] / 2.0,
             gate_h_half=self._gates_information["hole_height"] / 2.0,
             W_nom=W_nom, H_nom=H_nom, tunnel_sigma=tunnel_sigma,
+            qc_gate=qc_gate, gate_sigma=gate_sigma,
         )
 
         cost_cfg = {
