@@ -14,6 +14,7 @@ _SAMPLE_DS      = 0.03  # collision-check spacing (m)
 _LEAD = 0
 _MAX_GATE_ITER = 2
 _GATE_OFFSET = 0.5
+PUSH_GAIN = 1.1
 
 if TYPE_CHECKING:
     from lsy_drone_racing.control.env_obs import EnvState_t
@@ -93,8 +94,8 @@ class SplinePlanner(Planner):
         pGLL_array, y_GBL_array = self._gate(obs)
 
         # Parameter defined to set helping points in front and behind the gates
-        Distance = 0.6
-        lead_dist = 0.25
+        Distance = 0.3
+        lead_dist = 0.1
 
         # Create waypoint matrix
         p_WLL_array = pDLL
@@ -108,7 +109,7 @@ class SplinePlanner(Planner):
         nf = np.linalg.norm(fwd)
         if nf > 1e-6:
             lead = pDLL + lead_dist * (fwd / nf)
-            #p_WLL_array = np.vstack([p_WLL_array, lead])
+            p_WLL_array = np.vstack([p_WLL_array, lead])
 
         pPrevLL = np.zeros(3)
         pNextLL = np.zeros(3)
@@ -118,7 +119,7 @@ class SplinePlanner(Planner):
         bool_prev_waypoint = np.linalg.norm(pDLL - pGLL_array[0]) > 1.2*Distance
 
         for i in range(len(pGLL_array)):
-            if (i == 0)&(bool_prev_waypoint):
+            if (bool_prev_waypoint):
                 pPrevLL[0] = pGLL_array[i,0] - Distance*np.cos(y_GBL_array[i])
                 pPrevLL[1] = pGLL_array[i,1] - Distance*np.sin(y_GBL_array[i])
                 pPrevLL[2] = pGLL_array[i,2]
@@ -138,6 +139,11 @@ class SplinePlanner(Planner):
         p_WLL_array = self._detour_gates1(obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed)
 
         p_WLL_array = self._avoid_hindrance(obs, pGLL_array, y_GBL_array, p_WLL_array, t_elapsed)
+
+
+        #p_WLL_array = self._detour(obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed)
+
+        self._waypoints = np.asarray(p_WLL_array, dtype=float).copy()
 
         first_distance = np.linalg.norm(pDLL - p_WLL_array)
 
@@ -499,54 +505,163 @@ class SplinePlanner(Planner):
         new_p_WLL_array = np.array(wps)
         return new_p_WLL_array
     
-    def _detour_gates(
-            self,
-            obs: EnvState_t,
-            p_WLL_array: np.ndarray,
-            pGLL_array: np.ndarray,
-            y_GBL_array: np.ndarray,
-            t_elapsed: float
-        ) -> np.ndarray:
-        """Samples detours around gates in case the nominal trajectory hits a gate fram.
-        
-        Arg:
-            obs:                    Environment state estimation.
-            p_WLL_array:            Nominal Waypoints.
-            pGLL_array:             Centre of gates.
-            y_GBL_array:            Yaw of gates.
-            t_elapsed:              Time passed in the race so far.
+    def _detour2(self, obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed):
+        """Creates waypoints between gates to clear obstacles and gate frames."""
+        pOLL_array = obs.pOLL_array
+        spline, t_sample = self._create_spline(p_WLL_array, t_elapsed)
+        t_dense = np.linspace(0, t_sample[-1], len(t_sample) * 4)
+        pts = spline(t_dense)
 
-        Returns:
-            new_p_WLL_array:        Total waypoints.
-        """
+        # progress along the curve (path length), and each waypoint on the same ruler
+        seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        cum = np.concatenate([[0.0], np.cumsum(seg)])
+        t_gates  = spline.x
+        kept_wps = spline(t_gates)
+        s_wp     = np.interp(t_gates, t_dense, cum)
+
         detours = []
-        base_push = FRAME_WIDTH / 2 + CLEARANCE*2
+        inside = False
+        its_gate = its_obst = False
+        entry_i = entry_c = entry_push = entry_yaw = None
 
-        for _ in range(_MAX_GATE_ITER):
-            wps = self._assemble_with_detours(p_WLL_array, detours)
+        for i, p in enumerate(pts):
+            hit_obst, c_xy, push = self._check_obsticle(p, pOLL_array)
+            hit_gate, c_gate, local_gate, yaw_gate, push_gate = self._check_gate(p, pGLL_array, y_GBL_array)
+
+            if hit_obst or hit_gate:                      # entering a collision run
+                if not inside:
+                    inside, entry_i = True, i
+                    if hit_obst:                          # obstacle wins ties
+                        its_obst, its_gate = True, False
+                        entry_c, entry_push = c_xy, push
+                    else:
+                        its_gate, its_obst = True, False
+                        entry_c, entry_yaw = c_gate, yaw_gate
+                continue
+
+            if inside and its_obst:
+                inside, its_obst = False, False
+                p_in, p_out = pts[entry_i], p
+                mid   = 0.5 * (p_in[:2] + p_out[:2])
+                d_mid = np.linalg.norm(mid - entry_c)
+                d_to_clear = 0.15 + CLEARANCE - d_mid
+                entry_push = PUSH_GAIN * d_to_clear
+                entry_push = min([(0.15 + CLEARANCE) * PUSH_GAIN, 2*entry_push])
+                bis = (p_in[:2] - entry_c) + (p_out[:2] - entry_c)
+                nb  = np.linalg.norm(bis)
+                new_xy = entry_c + entry_push * bis / nb
+                new_wp = np.array([new_xy[0], new_xy[1], 0.5 * (p_in[2] + p_out[2])])
+                detours.append((0.5 * (cum[entry_i] + cum[i]), new_wp))
+
+            if inside and its_gate:
+                inside, its_gate = False, False
+                p_in, p_out = pts[entry_i], p
+
+                # midpoint in the gate's local frame
+                c, s = np.cos(entry_yaw), np.sin(entry_yaw)
+                mid = 0.5 * (p_in + p_out)
+                d = mid - entry_c
+                ly = -d[0] * s + d[1] * c
+                lz =  d[2]
+
+                # nearest outer edge (y or z only), direction inlined
+                half_outer = FRAME_WIDTH / 2
+                d_edges = [half_outer - ly, half_outer + ly, half_outer - lz, half_outer + lz]
+                k = int(np.argmin(d_edges))
+                ld = [(0.0, 1.0, 0.0), (0.0, -1.0, 0.0),
+                      (0.0, 0.0, 1.0), (0.0, 0.0, -1.0)][k]
+                push_dir = np.array([ld[0] * c - ld[1] * s,
+                                     ld[0] * s + ld[1] * c,
+                                     ld[2]])
+
+                # dynamic magnitude: clear the edge + extra ∝ how deep the clip sits
+                push_dist = PUSH_GAIN * d_edges[k]
+                new_wp = entry_c + push_dist * push_dir
+                detours.append((0.5 * (cum[entry_i] + cum[i]), new_wp))
+
+        # merge waypoints + detours by curve arc-length so the re-spline stays clean
+        items = [(s_wp[k], kept_wps[k]) for k in range(len(t_gates))]
+        items += detours
+        items.sort(key=lambda it: it[0])
+        return np.array([pt for _, pt in items])
+
+    def _detour(self, obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed):
+        """Iteratively detour around obstacles/gate frames until the path is clean."""
+        pOLL_array = obs.pOLL_array
+        wps = np.asarray(p_WLL_array, dtype=float)
+
+        for _ in range(_MAX_AVOID_ITER):
             spline, t_sample = self._create_spline(wps, t_elapsed)
-            t_dense = np.linspace(0, t_sample[-1], len(t_sample) * 4)
+            t_dense = np.linspace(0, t_sample[-1], len(t_sample) * 4) # change later
             pts = spline(t_dense)
-
-            # Check how far each waypoint is so that a new waypoint is set right
-            seg = np.linalg.norm(np.diff(wps, axis=0), axis=1)
+            seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
             cum = np.concatenate([[0.0], np.cumsum(seg)])
-            t_wps = cum / cum[-1] * t_dense[-1]
+            t_gates  = spline.x
+            kept_wps = spline(t_gates)
+            s_wp     = np.interp(t_gates, t_dense, cum)
 
-            hit = False
+            detours = []
+            inside = its_gate = its_obst = False
+            entry_i = entry_c = entry_push = entry_yaw = None
+
             for i, p in enumerate(pts):
-                is_hit, c, local, yaw, push = self._check_gate(p, pGLL_array, y_GBL_array)
-                if is_hit:
-                    n_passed = int(np.searchsorted(t_wps, t_dense[i]))
-                    d = self._push_dir_frame1(local, yaw)
-                    detour = c + base_push * d
-                    detours.append((n_passed, detour))
-                    hit = True
-                    break
+                hit_obst, c_xy, push = self._check_obsticle(p, pOLL_array)
+                hit_gate, c_gate, local_gate, yaw_gate, push_gate = self._check_gate(p, pGLL_array, y_GBL_array)
 
-            if not hit:
+                if hit_obst or hit_gate:
+                    if not inside:
+                        inside, entry_i = True, i
+                        if hit_obst:
+                            its_obst, its_gate = True, False
+                            entry_c, entry_push = c_xy, push
+                        else:
+                            its_gate, its_obst = True, False
+                            entry_c, entry_yaw = c_gate, yaw_gate
+                    continue
+
+                if inside and its_obst:
+                    inside, its_obst = False, False
+                    p_in, p_out = pts[entry_i], p
+                    mid   = 0.5 * (p_in[:2] + p_out[:2])
+                    d_mid = np.linalg.norm(mid - entry_c)
+                    entry_push = (0.15 + CLEARANCE) + PUSH_GAIN * (0.15 + CLEARANCE - d_mid)
+                    bis = (p_in[:2] - entry_c) + (p_out[:2] - entry_c)
+                    nb  = np.linalg.norm(bis)
+                    if nb < 1e-6:
+                        tv = p_out[:2] - p_in[:2]; bis = np.array([-tv[1], tv[0]]); nb = np.linalg.norm(bis) + 1e-9
+                    new_xy = entry_c + entry_push * bis / nb
+                    new_wp = np.array([new_xy[0], new_xy[1], 0.5 * (p_in[2] + p_out[2])])
+                    hit_gate, *_ = self._check_gate(new_wp, pGLL_array, y_GBL_array)
+                    #r = 0.15 + CLEARANCE    
+                    #if hit_gate:
+                    #    far_push = r + PUSH_GAIN * r
+                    # #   new_xy = entry_c - far_push * bis / nb
+                    #    new_wp = np.array([new_xy[0], new_xy[1], 0.5 * (p_in[2] + p_out[2])])
+                    detours.append((0.5 * (cum[entry_i] + cum[i]), new_wp))
+                    
+
+                if inside and its_gate:
+                    inside, its_gate = False, False
+                    p_in, p_out = pts[entry_i], p
+                    mid = 0.5 * (p_in + p_out)
+                    c, s = np.cos(entry_yaw), np.sin(entry_yaw)
+                    d = mid - entry_c
+                    ly = -d[0] * s + d[1] * c; lz = d[2]
+                    half_outer = FRAME_WIDTH / 2
+                    d_edges = [half_outer - ly, half_outer + ly, half_outer - lz, half_outer + lz]
+                    k = int(np.argmin(d_edges))
+                    ld = [(0.0, 1.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, 1.0), (0.0, 0.0, -1.0)][k]
+                    push_dir = np.array([ld[0] * c - ld[1] * s, ld[0] * s + ld[1] * c, ld[2]])
+                    # base the apex on the CURRENT clip point, push it PAST the edge + clearance
+                    new_wp = mid + (d_edges[k] + CLEARANCE + PUSH_GAIN * d_edges[k]) * push_dir
+                    detours.append((0.5 * (cum[entry_i] + cum[i]), new_wp))
+
+            if not detours:
                 return wps
-            
-            new_p_WLL_array = self._assemble_with_detours1(p_WLL_array, detours)
+            #breakpoint()
 
-        return new_p_WLL_array
+            items = [(s_wp[k], kept_wps[k]) for k in range(len(t_gates))] + detours
+            items.sort(key=lambda it: it[0])
+            wps = np.array([pt for _, pt in items])
+
+        return wps

@@ -18,7 +18,7 @@ __all__ = ["Trajectory", "Planner", "DEFAULT_MAX_SPEED"]
 DEFAULT_MAX_SPEED = 12.0  # m/s
 FRAME_WIDTH = 0.72
 FRAME_OPENING = 0.4
-FRAME_THICK = 0.2
+FRAME_THICK = 0.1
 POST_WIDTH = 0.2
 CLEARANCE = 0.1
 
@@ -156,6 +156,7 @@ class Planner(ABC):
         
         # Collision happens if it is inside gate frame but not the airhole
         gate_collisions = in_depth & in_outer & ~in_open
+        
         is_inside_frame = bool(np.any(gate_collisions))
         post_collisions = lz_post & in_post & in_depth
         is_post_collisions = bool(np.any(post_collisions))
@@ -166,8 +167,11 @@ class Planner(ABC):
         if is_post_collisions:
             lz = np.abs(lz*10)
 
-        print(is_post_collisions, is_inside_frame)
+        #print(is_post_collisions, is_inside_frame)
 
+        #if is_inside_frame:
+            #print(in_depth, in_outer, ~in_open)
+        #breakpoint()
         g = int(np.argmax(gate_collisions))
         centre = pGLL_array[g]
         local = np.array([lx[g], ly[g], lz[g]])
