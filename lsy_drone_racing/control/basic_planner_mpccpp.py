@@ -49,14 +49,15 @@ class BasicPlannerMPCCpp:
         self._des_vel_spline: CubicSpline | None = None
         self._waypoints_pos:  np.ndarray | None  = None
         self._waypoints_vel:  np.ndarray | None  = None
-        self._waypoints = np.ndarray | None  # for debugging only; not included in the planner dict
+        self._waypoints: np.ndarray | None = None  # the racing line (tunnel centerline source)
     # ──────────────────────────────────────────────────────────────────────────
 
     def plan(self) -> dict:
         """Build the reference spline and return the planner dict."""
-        # Waypoints: drone start → gate centres (in order)
-        waypoints = np.vstack([self._start_pos, self._gate_positions])
-
+        # The racing line: an ordered waypoint list that already threads every
+        # gate. The fitted des_pos_spline below is consumed by MPCC++ as the
+        # tunnel CENTERLINE (it reparameterizes it to arc length and projects
+        # the gate centres onto it). Do NOT append gate centres here.
         self._waypoints = np.array(
             [
                 [-1.5, 0.75, 0.05],
@@ -69,6 +70,7 @@ class BasicPlannerMPCCpp:
                 [-1.2, -0.2, 1.2],
                 [-0.0, -0.7, 1.2],
                 [0.5, -0.75, 1.2],
+                [1.5, -0.75, 1.2],
             ]
         )
 
@@ -102,7 +104,7 @@ class BasicPlannerMPCCpp:
             "waypoints_pos":      self._waypoints_pos,
             "waypoints_vel":      self._waypoints_vel,
             "gate_positions":     self._gate_positions,
-            "approach_waypoints": self._waypoints,  # sparse knots for the tunnel ref path
+            "approach_waypoints": self._waypoints,  # vestigial: MPCC++ now uses des_pos_spline
         }
 
     def get_pos_traj(self, n: int = 200) -> np.ndarray:

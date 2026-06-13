@@ -193,7 +193,7 @@ def _draw_mpccpp_tunnel(
         draw_line(sim, corners[:, cidx, :], rgba=ring_rgba)
 
     # corner markers
-    draw_points(sim, corners.reshape(-1, 3), rgba=corner_rgba, size=0.02)
+    #draw_points(sim, corners.reshape(-1, 3), rgba=corner_rgba, size=0.02)
 
 
 def _draw_cylinder_obstacle(
@@ -228,6 +228,135 @@ def _draw_tunnel_centerline(sim: Sim, ref, n: int = 150, rgba: NDArray | None = 
     s_vals = np.linspace(0.0, ref.length, n)
     pts = np.array([ref.eval(float(s)) for s in s_vals])
     draw_line(sim, pts, rgba=rgba)
+
+
+def plot_tube_width_profile(
+    ref,
+    save_path: str = "tube_width_profile.png",
+    n: int = 1500,
+    floor: float = 0.05,
+    show_activation_panel: bool = True,
+) -> str | None:
+    """Dump a PNG of the MPCC++ tunnel cross-section size along the path.
+
+    Use this to debug tube shrink/expand: it shows the W(theta)/H(theta) the
+    solver actually sees, plus a diagnostic of the per-gate Gaussian bumps.
+
+    Top panel:    W(theta), H(theta) straight from ref.width(theta), with the
+                  nominal size, the per-gate target (ref.gate_hw/hh) and the
+                  width() floor drawn for reference, and a vertical marker at
+                  every gate arc-length.
+    Bottom panel: the per-gate Gaussian activations exp(-1/2 (d/sigma)^2), shown
+                  as BOTH their sum (what the current width() subtracts) and
+                  their max (nearest-gate). sum >> max, or sum > 1, means the
+                  gate bumps overlap and the tube is being over-pinched.
+
+    Args:
+        ref:                   MPCC++ TunnelReferencePath (e.g. controller._ref).
+        save_path:             Output PNG path (relative paths land in CWD).
+        n:                     Number of theta samples.
+        floor:                 The clamp value used inside width() (drawn for ref).
+        show_activation_panel: Add the Gaussian-activation diagnostic subplot.
+
+    Returns:
+        The saved path, or None if plotting was not possible.
+    """
+    if ref is None:
+        return None
+    try:
+        import sys
+
+        import matplotlib
+
+        if "matplotlib.pyplot" not in sys.modules:
+            matplotlib.use("Agg")  # headless: crazyflow viewer is not matplotlib
+        import matplotlib.pyplot as plt
+    except Exception as exc:  # noqa: BLE001
+        print(f"[tube-profile] matplotlib unavailable: {exc}")
+        return None
+
+    L = float(ref.length)
+    thetas = np.linspace(0.0, L, n)
+    WH = np.array([ref.width(float(t)) for t in thetas])
+    W, H = WH[:, 0], WH[:, 1]
+
+    gate_s = np.atleast_1d(np.asarray(getattr(ref, "gate_s", []), dtype=float))
+    W_nom = float(getattr(ref, "W_nom", np.nan))
+    gate_hw = np.atleast_1d(np.asarray(getattr(ref, "gate_hw", []), dtype=float))
+    sigma = float(getattr(ref, "tunnel_sigma", np.nan))
+    closed = bool(getattr(ref, "closed", False))
+
+    two = show_activation_panel and gate_s.size > 0 and np.isfinite(sigma)
+    npan = 2 if two else 1
+    fig, axs = plt.subplots(npan, 1, figsize=(11, 3.7 * npan), squeeze=False)
+
+    # ---- top panel: the cross-section the solver sees ----------------------
+    ax = axs[0, 0]
+    top = max(W.max(), H.max(), W_nom if np.isfinite(W_nom) else 0.0) * 1.18 + 1e-3
+    ax.set_ylim(0, top)
+    ax.plot(thetas, W, color="tab:blue", lw=2.0, label=r"$W(\theta)$ half-width")
+    if not np.allclose(H, W):
+        ax.plot(thetas, H, color="tab:purple", lw=1.8, label=r"$H(\theta)$ half-height")
+    if np.isfinite(W_nom):
+        ax.axhline(W_nom, color="0.45", ls="--", lw=1.1)
+        ax.text(L * 0.01, W_nom, f" W_nom={W_nom:.3g}", color="0.35",
+                fontsize=9, va="bottom", ha="left")
+    if gate_hw.size:
+        gt = float(np.min(gate_hw))
+        ax.axhline(gt, color="tab:red", ls=":", lw=1.3)
+        ax.text(L * 0.01, gt, f" gate target={gt:.3g}", color="tab:red",
+                fontsize=9, va="bottom", ha="left")
+    ax.axhline(floor, color="k", ls="-.", lw=0.8)
+    ax.text(L * 0.55, floor, f" width() floor={floor:.3g}", color="k",
+            fontsize=8, va="bottom", ha="left")
+    for k, gs in enumerate(gate_s):
+        ax.axvline(gs, color="tab:red", lw=1.0, alpha=0.5)
+        ax.text(gs, top * 0.04, f"G{k + 1}", color="tab:red", ha="center", fontsize=8)
+    ax.set_xlim(0, L)
+    ax.set_xlabel(r"progress $\theta$ [m]")
+    ax.set_ylabel("tunnel half-size [m]")
+    ax.set_title(
+        f"MPCC++ tube cross-section vs progress   "
+        f"(sigma={sigma:.3g} m, L={L:.2f} m, {gate_s.size} gates)",
+        fontsize=10,
+    )
+    ax.grid(alpha=0.25)
+    ax.legend(loc="upper right", fontsize=9)
+
+    # ---- bottom panel: Gaussian activation diagnostic ----------------------
+    if two:
+        ax2 = axs[1, 0]
+        d = thetas[:, None] - gate_s[None, :]
+        if closed:
+            d = (d + L / 2.0) % L - L / 2.0
+        g = np.exp(-0.5 * (d / sigma) ** 2)  # (n, M)
+        g_sum, g_max = g.sum(axis=1), g.max(axis=1)
+        ax2.plot(thetas, g_sum, color="tab:red", lw=2.0,
+                 label=r"$\sum_j g_j$  (current width() subtracts this)")
+        ax2.plot(thetas, g_max, color="tab:green", lw=2.0,
+                 label=r"$\max_j g_j$  (nearest-gate)")
+        ax2.axhline(1.0, color="0.4", ls="--", lw=1.0)
+        ax2.text(L * 0.01, 1.0, " over-pinch threshold = 1", color="0.35",
+                 fontsize=9, va="bottom")
+        for gs in gate_s:
+            ax2.axvline(gs, color="tab:red", lw=1.0, alpha=0.5)
+        ax2.set_xlim(0, L)
+        ax2.set_ylim(0, max(1.1, float(g_sum.max()) * 1.1))
+        ax2.set_xlabel(r"progress $\theta$ [m]")
+        ax2.set_ylabel("Gaussian activation")
+        ax2.set_title(
+            "Per-gate bump activation: sum >> max (or sum > 1) "
+            "means bumps overlap and the tube is over-pinched",
+            fontsize=10,
+        )
+        ax2.grid(alpha=0.25)
+        ax2.legend(loc="upper right", fontsize=9)
+
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print(f"[tube-profile] saved {save_path}")
+    return save_path
 
 
 class DroneRacingPipeline(Controller):
@@ -265,6 +394,13 @@ class DroneRacingPipeline(Controller):
                 "Choose 'mpccpp', 'mpcc', or 'nmpc'."
             )
 
+        # Debug: dump the MPCC++ tube cross-section profile to a PNG on startup.
+        if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):
+            try:
+                plot_tube_width_profile(self._controller._ref, "tube_width_profile.png")
+            except Exception as exc:  # noqa: BLE001 -- never let debug plotting break a run
+                print(f"[pipeline] tube profile plot failed: {exc}")
+
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
     ) -> NDArray[np.floating]:
@@ -293,6 +429,16 @@ class DroneRacingPipeline(Controller):
         self._controller.reset()
         self._controller.set_tick(self._tick)
 
+    def dump_tube_profile(self, save_path: str = "tube_width_profile.png") -> str | None:
+        """Regenerate the MPCC++ tube cross-section profile PNG on demand.
+
+        Call this any time after construction (e.g. from a debugger or
+        episode_callback) to inspect the current tube shrink/expand behaviour.
+        Returns the saved path, or None if it could not be produced.
+        """
+        ref = getattr(self._controller, "_ref", None)
+        return plot_tube_width_profile(ref, save_path)
+
     def render_callback(self, sim: Sim):
         """Visualize the planned path, MPC predictions, gates, and obstacles."""
         # Planned path (green)
@@ -317,25 +463,25 @@ class DroneRacingPipeline(Controller):
         #    draw_points(sim, p.reshape(1, -1), rgba=(1.0, 0.0, 0.0, 0.5), size=0.01)
 
         # Gates
-        for gate in self._controller._gates:
-            _draw_wedge_gate(
-                sim,
-                position=gate.position,
-                quaternion=gate.quaternion,
-                total_length=gate.total_length,
-                total_height=gate.total_height,
-                hole_width=gate.hole_width,
-                hole_height=gate.hole_height,
-                thickness=gate.thickness,
-                rgba=np.array([0.0, 0.5, 1.0, 1.0]),
-            )
+        #for gate in self._controller._gates:
+        #    _draw_wedge_gate(
+        #        sim,
+        #        position=gate.position,
+        #        quaternion=gate.quaternion,
+        #        total_length=gate.total_length,
+        #        total_height=gate.total_height,
+        #        hole_width=gate.hole_width,
+        #        hole_height=gate.hole_height,
+        #        thickness=gate.thickness,
+        #        rgba=np.array([0.0, 0.5, 1.0, 1.0]),
+        #    )
 
         # Obstacles
-        for obs in self._controller._obstacles:
-            _draw_cylinder_obstacle(
-                sim,
-                position=obs.position,
-                height=obs.total_height,
-                radius=obs.d_min,
-                rgba=np.array([1.0, 0.2, 0.2, 0.7]),
-            )
+        #for obs in self._controller._obstacles:
+        #    _draw_cylinder_obstacle(
+        #        sim,
+        #        position=obs.position,
+        #        height=obs.total_height,
+        #        radius=obs.d_min,
+        #        rgba=np.array([1.0, 0.2, 0.2, 0.7]),
+        #    )

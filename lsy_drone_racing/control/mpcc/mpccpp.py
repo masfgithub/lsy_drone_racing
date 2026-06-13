@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from drone_models.core import load_params
+from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation as R
 
 from lsy_drone_racing.control.controller_interface import ControllerInterface
@@ -42,8 +43,11 @@ from lsy_drone_racing.control.mpcc.mpccpp_setup import (
     _WIDX,
     num_params,
 )
-from lsy_drone_racing.control.mpcc_test.mpcc_reference import ReferencePath
-from lsy_drone_racing.control.mpcc_test.mpccpp_reference import TunnelReferencePath, _gate_axes
+from lsy_drone_racing.control.mpcc_test.mpccpp_reference import (
+    TunnelReferencePath,
+    _gate_axes,
+    _perp,
+)
 from lsy_drone_racing.control.nmpc.env_soft_constraints import (
     get_gate_objects,
     get_obstacle_objects,
@@ -61,85 +65,210 @@ def _gate_normals_from_quats(quats_wxyz: np.ndarray) -> np.ndarray:
     return R.from_quat(quats_xyzw).apply([1.0, 0.0, 0.0])
 
 
-def _build_extended_tunnel_ref(
-    approach_wps: np.ndarray,
+def _project_point(spline, d1, length, pos, s_lo=0.0, s_hi=None,
+                   n_coarse=2000, n_newton=8):
+    """Arc length of the point on `spline` nearest to `pos`, searched within
+    [s_lo, s_hi]. Coarse nearest-sample seed + a few Gauss-Newton steps."""
+    if s_hi is None:
+        s_hi = length
+    grid = np.linspace(s_lo, s_hi, n_coarse)
+    pts = np.asarray(spline(grid))
+    s = float(grid[int(np.argmin(np.sum((pts - pos) ** 2, axis=1)))])
+    for _ in range(n_newton):
+        e = np.asarray(spline(s)) - pos
+        t = np.asarray(d1(s))
+        h = float(t @ t)
+        if h < 1e-12:
+            break
+        s -= float(e @ t) / h
+        s = min(max(s, s_lo), s_hi)
+    return s
+
+
+class SplineTunnelReference:
+    """MPCC++ tunnel reference whose centerline IS the planner's racing line.
+
+    The planner's position spline (``des_pos_spline`` -- a time-parameterized
+    curve that already threads every gate in order) is reparameterized to arc
+    length and used directly as the contouring centerline ``pd(theta)``. Gates
+    are NOT inserted as spline knots: each gate center is PROJECTED onto the
+    centerline to obtain its progress value ``theta_gate``, and the tunnel pinch
+    and ``qc`` bump are keyed to those projected values. Consequently ``theta``
+    runs ``0 .. length`` over the true racing line and matches the drone's
+    physical progress, and ``ref.length`` equals the racing-line length.
+
+    Exposes the same interface the controller/renderer/plotter rely on:
+    ``eval``/``deriv1``/``deriv2``/``tangent``/``frame``/``width``/``qc`` and the
+    attributes ``length``/``gate_s``/``gate_centers``/``W_nom``/``H_nom``/
+    ``gate_hw``/``gate_hh``/``tunnel_sigma``/``closed``.
+    """
+
+    def __init__(self, arc_spline, length, gate_s, gate_centers, gate_n,
+                 gate_w, gate_h, gate_hw, gate_hh, W_nom, H_nom, tunnel_sigma,
+                 qc_nom=1.0, qc_gate=120.0, gate_sigma=0.8,
+                 frame_up=(0.0, 0.0, 1.0), width_floor=0.05):
+        self._spline = arc_spline
+        self._d1 = arc_spline.derivative(1)
+        self._d2 = arc_spline.derivative(2)
+        self.length = float(length)
+        self.closed = False
+        self.gate_s = np.asarray(gate_s, dtype=float)
+        self.gate_centers = np.asarray(gate_centers, dtype=float)
+        self.gate_n = np.asarray(gate_n, dtype=float)
+        self.gate_w = np.asarray(gate_w, dtype=float)
+        self.gate_h = np.asarray(gate_h, dtype=float)
+        self.gate_hw = np.asarray(gate_hw, dtype=float)
+        self.gate_hh = np.asarray(gate_hh, dtype=float)
+        self.W_nom = float(W_nom)
+        self.H_nom = float(H_nom)
+        self.tunnel_sigma = float(tunnel_sigma)
+        self.qc_nom = float(qc_nom)
+        self.qc_gate = float(qc_gate)
+        self.gate_sigma = float(gate_sigma)
+        self._up = np.asarray(frame_up, dtype=float)
+        self._floor = float(width_floor)
+
+    # ---- centerline (arc-length parameterized) ----
+    def _wrap(self, theta):
+        return float(np.clip(theta, 0.0, self.length))
+
+    def eval(self, theta):
+        return np.asarray(self._spline(self._wrap(theta)), dtype=float)
+
+    def deriv1(self, theta):
+        return np.asarray(self._d1(self._wrap(theta)), dtype=float)
+
+    def deriv2(self, theta):
+        return np.asarray(self._d2(self._wrap(theta)), dtype=float)
+
+    def tangent(self, theta):
+        t = self.deriv1(theta)
+        nrm = np.linalg.norm(t)
+        return t / nrm if nrm > 1e-9 else np.array([1.0, 0.0, 0.0])
+
+    def project(self, pos, s_lo=0.0, s_hi=None):
+        return _project_point(self._spline, self._d1, self.length,
+                              np.asarray(pos, dtype=float), s_lo=s_lo, s_hi=s_hi)
+
+    # ---- gate-keyed tunnel (same math as TunnelReferencePath, open path) ----
+    def _segment(self, th):
+        gs = self.gate_s
+        M = len(gs)
+        if M == 1:
+            return 0, 0, 0.0
+        th = min(max(th, gs[0]), gs[-1])
+        i = int(np.searchsorted(gs, th, side="right")) - 1
+        i = max(0, min(M - 2, i))
+        return i, i + 1, (th - gs[i]) / (gs[i + 1] - gs[i] + 1e-12)
+
+    def frame(self, theta):
+        t = self.tangent(theta)
+        if self.gate_s.size == 0:
+            n = _perp(t)
+            return n, np.cross(t, n)
+        i, j, a = self._segment(self._wrap(theta))
+        ew = (1 - a) * self.gate_w[i] + a * self.gate_w[j]
+        eh = (1 - a) * self.gate_h[i] + a * self.gate_h[j]
+        n = ew - np.dot(ew, t) * t
+        nn = np.linalg.norm(n)
+        n = n / nn if nn > 1e-9 else _perp(t)
+        b = np.cross(t, n)
+        if np.dot(b, eh) < 0:
+            n, b = -n, -b
+        return n, b
+
+    def width(self, theta):
+        th = self._wrap(theta)
+        d = th - self.gate_s
+        g = np.exp(-0.5 * (d / self.tunnel_sigma) ** 2)
+        W = self.W_nom - float(np.sum((self.W_nom - self.gate_hw) * g))
+        H = self.H_nom - float(np.sum((self.H_nom - self.gate_hh) * g))
+        return max(W, self._floor), max(H, self._floor)
+
+    def qc(self, theta):
+        if self.gate_s.size == 0:
+            return self.qc_nom
+        th = self._wrap(theta)
+        d = th - self.gate_s
+        bump = float(np.exp(-0.5 * (d / self.gate_sigma) ** 2).sum())
+        bump = min(bump, 1.0)
+        return self.qc_nom + (self.qc_gate - self.qc_nom) * bump
+
+
+def _build_spline_tunnel_ref(
+    des_pos_spline,
     gate_positions: np.ndarray,
-    gate_normals: np.ndarray,
+    gate_quats_wxyz: np.ndarray,
     gate_w_half: float,
     gate_h_half: float,
     W_nom: float,
     H_nom: float,
     tunnel_sigma: float,
-    gate_tangent_len: float = 0.5,
+    frame_up: tuple = (0.0, 0.0, 1.0),
     qc_nom: float = 1.0,
     qc_gate: float = 120.0,
     gate_sigma: float = 0.8,
-    frame_up: tuple = (0.0, 0.0, 1.0),
-) -> TunnelReferencePath:
-    """Build a TunnelReferencePath whose spline begins at the approach waypoints.
-
-    Approach waypoints define the pre-gate portion of the path but are NOT
-    added to gate_indices, so they produce no qc spike and no tunnel pinch.
-    Only real gate centers trigger the qc bump and tunnel narrowing.
+    n_arc: int = 10000,
+) -> SplineTunnelReference:
+    """Build a SplineTunnelReference from the planner spline and the gate poses.
 
     Args:
-        approach_wps:     (K, 3) waypoints from drone start to first gate approach.
-        gate_positions:   (M, 3) gate center positions.
-        gate_normals:     (M, 3) gate through-normals (x-axis of gate frame).
-        gate_w_half:      Gate half-width (m).
-        gate_h_half:      Gate half-height (m).
-        W_nom:            Nominal tunnel half-width between gates (m).
-        H_nom:            Nominal tunnel half-height between gates (m).
-        tunnel_sigma:     Gaussian sigma for tunnel pinch at each gate (arc-length, m).
-        gate_tangent_len: Distance of the pre/post-gate helper points from gate center.
-        qc_nom:           Baseline contouring weight multiplier (outside gates).
-        qc_gate:          Peak contouring weight multiplier (at gate centers).
-        gate_sigma:       Gaussian sigma for the qc bump at each gate (arc-length, m).
-        frame_up:         World up-vector used to compute gate lateral/vertical axes.
+        des_pos_spline:  scipy CubicSpline (over time) = the racing line that
+                         already passes through all gates in order.
+        gate_positions:  (M, 3) gate center positions.
+        gate_quats_wxyz: (M, 4) gate orientation quaternions (wxyz).
+        gate_w_half:     Gate cross-section half-width target at the gates (m).
+        gate_h_half:     Gate cross-section half-height target at the gates (m).
+        W_nom:           Nominal tunnel half-width between gates (m).
+        H_nom:           Nominal tunnel half-height between gates (m).
+        tunnel_sigma:    Gaussian sigma for the tunnel pinch (arc-length, m).
+        frame_up:        World up-vector for gate lateral/vertical axes.
+        qc_nom/qc_gate:  Baseline / peak contour-weight multipliers.
+        gate_sigma:      Gaussian sigma for the qc bump (arc-length, m).
+        n_arc:           Samples used to reparameterize the spline to arc length.
 
     Returns:
-        A TunnelReferencePath instance whose spline starts at approach_wps[0].
+        A SplineTunnelReference whose centerline is the arc-length racing line.
     """
-    up = np.asarray(frame_up, dtype=float)
-    delta = float(gate_tangent_len)
-    M = len(gate_positions)
+    # 1) reparameterize the planner spline (over time) to arc length.
+    t0, t1 = float(des_pos_spline.x[0]), float(des_pos_spline.x[-1])
+    pts = np.asarray(des_pos_spline(np.linspace(t0, t1, n_arc)))
+    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
+    s_u, idx = np.unique(s, return_index=True)   # strictly increasing knots
+    arc_spline = CubicSpline(s_u, pts[idx])
+    length = float(s_u[-1])
+    d1 = arc_spline.derivative(1)
 
-    # Augmented knot list:  approach points (no gate tag) + gate triples (tagged)
-    aug: list[np.ndarray] = list(np.asarray(approach_wps, dtype=float))
-    gidx: list[int] = []
+    # 2) project each gate center onto the centerline, in path order so that
+    #    gate_s is monotonically increasing (avoids snapping to a later pass if
+    #    the racing line loops back near an earlier gate).
+    gates = np.asarray(gate_positions, dtype=float)
+    M = len(gates)
+    gate_s = np.zeros(M)
+    s_lo = 0.0
     for i in range(M):
-        c, n = gate_positions[i], gate_normals[i]
-        aug.append(c - delta * n)   # pre-gate helper (not a gate)
-        aug.append(c)               # gate center → gidx
-        gidx.append(len(aug) - 1)
-        aug.append(c + delta * n)   # post-gate helper (not a gate)
-    aug_arr = np.array(aug)
+        gate_s[i] = _project_point(arc_spline, d1, length, gates[i], s_lo=s_lo)
+        s_lo = min(gate_s[i] + 1e-3, length)
+    gate_s = np.clip(gate_s, 0.0, length)
 
-    gate_hw = np.broadcast_to(gate_w_half, (M,)).astype(float).copy()
-    gate_hh = np.broadcast_to(gate_h_half, (M,)).astype(float).copy()
+    # 3) gate cross-section axes from the gate normals.
+    up = np.asarray(frame_up, dtype=float)
+    normals = _gate_normals_from_quats(gate_quats_wxyz)
     gw = np.zeros((M, 3))
     gh = np.zeros((M, 3))
     for i in range(M):
-        gw[i], gh[i] = _gate_axes(gate_normals[i], up)
+        gw[i], gh[i] = _gate_axes(normals[i], up)
+    gate_hw = np.broadcast_to(gate_w_half, (M,)).astype(float).copy()
+    gate_hh = np.broadcast_to(gate_h_half, (M,)).astype(float).copy()
 
-    # Bypass TunnelReferencePath.__init__ so we can pass a hand-built gidx
-    # that excludes the approach waypoints from the gate set.
-    ref = object.__new__(TunnelReferencePath)
-    ReferencePath.__init__(
-        ref, aug_arr, closed=False, gate_indices=gidx,
-        qc_nom=qc_nom, qc_gate=qc_gate, gate_sigma=gate_sigma,
+    return SplineTunnelReference(
+        arc_spline=arc_spline, length=length, gate_s=gate_s,
+        gate_centers=gates, gate_n=normals, gate_w=gw, gate_h=gh,
+        gate_hw=gate_hw, gate_hh=gate_hh,
+        W_nom=W_nom, H_nom=(W_nom if H_nom is None else H_nom),
+        tunnel_sigma=tunnel_sigma, qc_nom=qc_nom, qc_gate=qc_gate,
+        gate_sigma=gate_sigma, frame_up=frame_up,
     )
-    ref.gate_centers = np.asarray(gate_positions, dtype=float)
-    ref.gate_n  = gate_normals
-    ref.gate_w  = gw
-    ref.gate_h  = gh
-    ref.gate_hw = gate_hw
-    ref.gate_hh = gate_hh
-    ref.W_nom        = float(W_nom)
-    ref.H_nom        = float(W_nom if H_nom is None else H_nom)
-    ref.tunnel_sigma = float(tunnel_sigma)
-    ref._up = up
-    return ref
 
 
 class MPCCpp(ControllerInterface):
@@ -157,7 +286,7 @@ class MPCCpp(ControllerInterface):
         t_total: int,
         N_horizon: int = 20,
         T_horizon: float = 0.5,
-        mu: float = 55.0,
+        mu: float = 1000.0,
         q_lag: float = 80.0,
         q_lag_peak: float = 500.0,
         q_contour: float = 120.0,
@@ -170,7 +299,8 @@ class MPCCpp(ControllerInterface):
         w_speed_gate: float = 9.0,
         W_nom: float = 0.3,
         H_nom: float = 0.3,
-        tunnel_sigma: float = 1.0,
+        tunnel_sigma: float = 0.4,
+        v_theta_max: float = 5.0,
         tunnel_soft: bool = True,
         tunnel_slack_lin: float = 1e3,
         tunnel_slack_quad: float = 1e3,
@@ -203,6 +333,8 @@ class MPCCpp(ControllerInterface):
             W_nom:              Nominal tunnel half-width between gates (m).
             H_nom:              Nominal tunnel half-height between gates (m).
             tunnel_sigma:       Gaussian sigma for tunnel pinch at gates (m arc-length).
+            v_theta_max:        Max progress speed v_theta (m/s of arc length). Must
+                                exceed the drone's along-track speed or theta lags.
             tunnel_soft:        If True, soften tunnel constraints via slacks.
             tunnel_slack_lin:   Linear slack penalty for tunnel.
             tunnel_slack_quad:  Quadratic slack penalty for tunnel.
@@ -244,31 +376,26 @@ class MPCCpp(ControllerInterface):
         self._obst_params = np.zeros((n_obs, OBST_DIM))
         self._update_obst_params(obs.pOLL_array)
 
-        # Build tunnel reference path.
-        # If the planner provides approach waypoints, prepend them so the path
-        # starts near the drone's actual position (not at the first gate helper).
-        # Approach waypoints are excluded from gate_indices → no qc spike, no
-        # tunnel pinch there; only real gate centers get those.
+        # Build the tunnel reference path.
+        # The tunnel CENTERLINE is the planner's racing line (des_pos_spline),
+        # which already threads every gate in order. We reparameterize it to arc
+        # length and use it directly as pd(theta); the gates are NOT inserted as
+        # spline knots -- each gate center is PROJECTED onto the centerline to
+        # locate where the tunnel pinches. theta therefore runs 0..ref.length
+        # over the true racing line and matches the drone's physical progress.
         self._W_nom = float(W_nom)
         self._H_nom = float(H_nom)
-        gate_normals = _gate_normals_from_quats(gates_quat_wxyz)
-        approach_wps = planner.get("approach_waypoints", None)
-        if approach_wps is not None and len(approach_wps) > 0:
-            self._ref = _build_extended_tunnel_ref(
-                approach_wps=np.asarray(approach_wps),
-                gate_positions=obs.pTLL_array,
-                gate_normals=gate_normals,
-                gate_w_half=self._gates_information["hole_width"] / 2.0,
-                gate_h_half=self._gates_information["hole_height"] / 2.0,
-                W_nom=W_nom, H_nom=H_nom, tunnel_sigma=tunnel_sigma,
-            )
-        else:
-            self._ref = self._build_tunnel_ref(
-                obs.pTLL_array,
-                gates_quat_wxyz,
-                self._gates_information,
-                W_nom=W_nom, H_nom=H_nom, tunnel_sigma=tunnel_sigma,
-            )
+        # Tunnel cross-section target at the gates (half the hole opening).
+        self._gates_information["hole_width"] = 0.05
+        self._gates_information["hole_height"] = 0.05
+        self._ref = _build_spline_tunnel_ref(
+            des_pos_spline=planner["des_pos_spline"],
+            gate_positions=obs.pTLL_array,
+            gate_quats_wxyz=gates_quat_wxyz,
+            gate_w_half=self._gates_information["hole_width"] / 2.0,
+            gate_h_half=self._gates_information["hole_height"] / 2.0,
+            W_nom=W_nom, H_nom=H_nom, tunnel_sigma=tunnel_sigma,
+        )
 
         cost_cfg = {
             "q_lag": q_lag, "q_lag_peak": q_lag_peak,
@@ -292,6 +419,7 @@ class MPCCpp(ControllerInterface):
             obstacle_soft=obstacle_soft,
             obstacle_slack_lin=obstacle_slack_lin,
             obstacle_slack_quad=obstacle_slack_quad,
+            v_theta_max=v_theta_max,
         )
         self._nx = self._ocp.model.x.rows()
         self._nu = self._ocp.model.u.rows()
@@ -388,7 +516,7 @@ class MPCCpp(ControllerInterface):
         pos          = self._ref.eval(theta)
         hover_thrust = self._mass * self._gravity
         x = np.zeros(self._nx)
-        x[0:3]  = pos
+        x[0:3]  = self._ref.eval(theta)#pos
         x[9]    = hover_thrust   # f_col
         x[10]   = hover_thrust   # f_cmd
         x[14]   = theta

@@ -179,6 +179,7 @@ def create_ocp_solver_mpccpp(
     obstacle_soft: bool = True,
     obstacle_slack_lin: float = 1e4,
     obstacle_slack_quad: float = 1e4,
+    v_theta_max: float = 5.0,
     verbose: bool = False,
 ) -> tuple[AcadosOcpSolver, AcadosOcp]:
     """Build the MPCC++ acados solver.
@@ -196,6 +197,9 @@ def create_ocp_solver_mpccpp(
         obstacle_soft:      If True, soften obstacle constraints via acados slacks.
         obstacle_slack_lin: Linear slack penalty for obstacles.
         obstacle_slack_quad:Quadratic slack penalty for obstacles.
+        v_theta_max:        Upper bound on the progress speed v_theta (m/s of arc
+                            length). The previous value of 2.0 throttled theta
+                            below the drone's along-track speed.
         verbose:            Pass to AcadosOcpSolver.
 
     Returns:
@@ -232,7 +236,7 @@ def create_ocp_solver_mpccpp(
 
     # ── Input box constraints: df_cmd, dr_cmd, dp_cmd, dy_cmd, v_theta ───────
     ocp.constraints.lbu   = np.array([-10.0, -10.0, -10.0, -10.0, 0.0])
-    ocp.constraints.ubu   = np.array([ 10.0,  10.0,  10.0,  10.0, 2.0])
+    ocp.constraints.ubu   = np.array([ 10.0,  10.0,  10.0,  10.0, v_theta_max])
     ocp.constraints.idxbu = np.array([0, 1, 2, 3, 4])
 
     # ── Nonlinear constraints (h >= 0) ────────────────────────────────────────
