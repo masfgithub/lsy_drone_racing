@@ -28,8 +28,9 @@ class NMPC(ControllerInterface):
         config: dict,
         t_total: int,
         use_soft: bool = False,
-        gate_weight: float = 1e6,
-        obstacle_weight: float = 1e6,
+        gate_weight: float = 1e4,
+        obstacle_weight: float = 1e4,
+        post_weight: float= 1e4
     ):
         """Initialize the attitude controller.
 
@@ -90,6 +91,7 @@ class NMPC(ControllerInterface):
                 self._obstacles,
                 gate_weight=gate_weight,
                 obstacle_weight=obstacle_weight,
+                post_weight=post_weight
             )
 
         else:

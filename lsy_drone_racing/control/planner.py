@@ -18,7 +18,8 @@ __all__ = ["Trajectory", "Planner", "DEFAULT_MAX_SPEED"]
 DEFAULT_MAX_SPEED = 12.0  # m/s
 FRAME_WIDTH = 0.72
 FRAME_OPENING = 0.4
-FRAME_THICK = 0.1
+FRAME_THICK = 0.2
+POST_WIDTH = 0.2
 CLEARANCE = 0.1
 
 
@@ -128,9 +129,11 @@ class Planner(ABC):
 
         """
         # Half-dimensions including clearance margins
-        half_outer = (FRAME_WIDTH / 2) + CLEARANCE
+        half_outer = (FRAME_WIDTH / 2)
         half_open  = FRAME_OPENING / 2
         half_thick = FRAME_THICK + CLEARANCE
+        half_post_width = POST_WIDTH/2 + CLEARANCE
+        post_height = pGLL_array[:, 2] - half_outer
 
         # Difference trajectory point to all gate centers
         diff = p_ref_LL - pGLL_array
@@ -144,13 +147,26 @@ class Planner(ABC):
         in_depth = np.abs(lx) < half_thick
         in_outer = (np.abs(ly) < half_outer) & (np.abs(lz) < half_outer)
         in_open  = (np.abs(ly) < half_open) & (np.abs(lz) < half_open)
+
+        # Gate Post
+        # point is in the post zone when it sits BELOW the opening (local frame, consistent units)
+        lz_post = lz < -half_open          # not: diff[:,2] < post_height
+        in_post = np.abs(ly) < half_post_width
+        post_collisions = lz_post & in_post & in_depth
         
         # Collision happens if it is inside gate frame but not the airhole
         gate_collisions = in_depth & in_outer & ~in_open
         is_inside_frame = bool(np.any(gate_collisions))
+        post_collisions = lz_post & in_post & in_depth
+        is_post_collisions = bool(np.any(post_collisions))
 
-        if not is_inside_frame:
+        if not is_inside_frame | is_post_collisions:
             return False, None, None, None, None
+        
+        if is_post_collisions:
+            lz = np.abs(lz*10)
+
+        print(is_post_collisions, is_inside_frame)
 
         g = int(np.argmax(gate_collisions))
         centre = pGLL_array[g]

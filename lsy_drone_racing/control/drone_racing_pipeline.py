@@ -6,6 +6,7 @@ TBD specify more in detail.
 from __future__ import annotations  # Python 3.10 type hints
 
 from typing import TYPE_CHECKING
+from lsy_drone_racing.control.nmpc.env_soft_constraints import POST_RADIUS
 
 import numpy as np
 from crazyflow.sim.visualize import draw_capsule, draw_line, draw_points
@@ -153,6 +154,38 @@ def _draw_cylinder_obstacle(
         cylinder=True,
     )
 
+def _draw_post(
+    sim: Sim,
+    gate_position: NDArray,
+    r_post: float,
+    hole_height: float,
+    margin: float,
+    z_floor: float = 0.0,
+    rgba: NDArray | None = None,
+):
+    """Draw the gate-post keep-out as a vertical capsule below the opening.
+
+    Mirrors post_penalty_sym: a capsule of radius r_post around the segment
+    from the floor up to z_top = gate_z - hole_height/2 - margin - r_post.
+    The rounded top therefore reaches gate_z - hole_height/2 - margin, just
+    below the opening, exactly like the penalty's keep-out.
+    """
+    if sim.viewer is None:
+        return
+    if rgba is None:
+        rgba = np.array([1.0, 0.6, 0.0, 0.5])  # orange: distinct from blue gates / red obstacles
+
+    cx, cy, cz = float(gate_position[0]), float(gate_position[1]), float(gate_position[2])
+    z_top = cz - hole_height / 2.0 - margin - r_post
+    draw_capsule(
+        sim,
+        np.array([cx, cy, z_floor]),
+        np.array([cx, cy, z_top]),
+        radius=r_post,
+        rgba=rgba,
+        cylinder=False,   # rounded caps -> matches distance-to-segment keep-out
+    )
+
 
 class DroneRacingPipeline(Controller):
     """This class handles the pipeline for the drone racing. It includes planning and control."""
@@ -256,6 +289,14 @@ class DroneRacingPipeline(Controller):
                 hole_height=gate.hole_height,
                 thickness=gate.thickness,
                 rgba=np.array([0.0, 0.5, 1.0, 1.0]),
+            )
+
+            _draw_post(
+                sim,
+                gate_position=gate.position,
+                r_post=POST_RADIUS,
+                hole_height=gate.hole_height,
+                margin=getattr(gate, "margin", 0.05),
             )
 
         for obs in self._controller._obstacles:

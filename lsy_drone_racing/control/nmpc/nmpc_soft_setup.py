@@ -43,6 +43,7 @@ def create_ocp_solver_soft(
     obstacles: list[CylinderObstacle],
     gate_weight: float = 1000.0,
     obstacle_weight: float = 1000.0,
+    post_weight=1000.0,
     verbose: bool = False,
 ) -> tuple[AcadosOcpSolver, AcadosOcp]:
     """Creates an acados OCP with soft environment constraints in the cost."""
@@ -65,6 +66,7 @@ def create_ocp_solver_soft(
         obstacles=obstacles,
         gate_weight=gate_weight,
         obstacle_weight=obstacle_weight,
+        post_weight=post_weight
     )
 
     # ── Cost: NONLINEAR_LS with penalty appended to residual ──────────────────
