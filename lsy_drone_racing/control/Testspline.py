@@ -142,8 +142,9 @@ def build_figure(start, gates, obstacles, traj, traj0, waypoints):
 def main():
     start = [2, -1, 1.0]
     gates = [(np.array([3.0, 0.0, 1.0]), 0.0),
-             (np.array([3.0, 1.0, 2]), np.deg2rad(180))]
-    obstacles = [[3.6, 0.5, 1.0], [2.0, 1.6, 1.0]]
+             (np.array([3.0, 1.0, 2]), np.deg2rad(180)),
+             (np.array([1.0, 1.0, 2]), np.deg2rad(180))]
+    obstacles = [[3.6, 0.5, 1.0], [1.3, 0.8, 1.0]]
 
     cfg = SimpleNamespace(env=SimpleNamespace(freq=50))
     planner = SplinePlanner(make_obs(start, gates, obstacles), {}, cfg, t_total=12, max_speed=2.0)

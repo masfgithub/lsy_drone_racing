@@ -18,7 +18,7 @@ __all__ = ["Trajectory", "Planner", "DEFAULT_MAX_SPEED"]
 DEFAULT_MAX_SPEED = 12.0  # m/s
 FRAME_WIDTH = 0.72
 FRAME_OPENING = 0.4
-FRAME_THICK = 0.1
+FRAME_THICK = 0.2
 POST_WIDTH = 0.2
 CLEARANCE = 0.1
 
@@ -133,7 +133,6 @@ class Planner(ABC):
         half_open  = FRAME_OPENING / 2
         half_thick = FRAME_THICK + CLEARANCE
         half_post_width = POST_WIDTH/2 + CLEARANCE
-        post_height = pGLL_array[:, 2] - half_outer
 
         # Difference trajectory point to all gate centers
         diff = p_ref_LL - pGLL_array

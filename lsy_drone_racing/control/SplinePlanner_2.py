@@ -94,7 +94,7 @@ class SplinePlanner(Planner):
         pGLL_array, y_GBL_array = self._gate(obs)
 
         # Parameter defined to set helping points in front and behind the gates
-        Distance = 0.3
+        Distance = 0.15
         lead_dist = 0.1
 
         # Create waypoint matrix
@@ -138,8 +138,8 @@ class SplinePlanner(Planner):
         #print('waypoints before detour:', p_WLL_array)
         p_WLL_array = self._detour_gates1(obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed)
 
-        p_WLL_array = self._avoid_hindrance(obs, pGLL_array, y_GBL_array, p_WLL_array, t_elapsed)
-
+        #p_WLL_array = self._avoid_hindrance(obs, pGLL_array, y_GBL_array, p_WLL_array, t_elapsed)
+        p_WLL_array = self._avoid_hindrance1(obs, pGLL_array, y_GBL_array, p_WLL_array, t_elapsed)
 
         #p_WLL_array = self._detour(obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed)
 
@@ -585,83 +585,80 @@ class SplinePlanner(Planner):
         items.sort(key=lambda it: it[0])
         return np.array([pt for _, pt in items])
 
-    def _detour(self, obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed):
-        """Iteratively detour around obstacles/gate frames until the path is clean."""
+    def _avoid_hindrance1(
+            self,
+            obs: EnvState_t,
+            pGLL_array: np.ndarray,
+            y_GBL_array: np.array,
+            p_WLL_array: np.ndarray,
+            t_elapsed: float
+    ) -> np.ndarray:
+        """Detour obstacle runs by rerouting on whichever side clears the gate
+        and gives the shorter local path."""
         pOLL_array = obs.pOLL_array
-        wps = np.asarray(p_WLL_array, dtype=float)
 
-        for _ in range(_MAX_AVOID_ITER):
-            spline, t_sample = self._create_spline(wps, t_elapsed)
-            t_dense = np.linspace(0, t_sample[-1], len(t_sample) * 4) # change later
-            pts = spline(t_dense)
-            seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
-            cum = np.concatenate([[0.0], np.cumsum(seg)])
-            t_gates  = spline.x
-            kept_wps = spline(t_gates)
-            s_wp     = np.interp(t_gates, t_dense, cum)
+        spline_test_array, t_sample = self._create_spline(p_WLL_array, t_elapsed)
+        t_dense = np.linspace(0, t_sample[-1], len(t_sample) * 4)
+        pts = spline_test_array(t_dense)
 
-            detours = []
-            inside = its_gate = its_obst = False
-            entry_i = entry_c = entry_push = entry_yaw = None
+        kept = []
+        inside = False
+        entry_i = None
+        entry_c = None
+        entry_push = None
 
-            for i, p in enumerate(pts):
-                hit_obst, c_xy, push = self._check_obsticle(p, pOLL_array)
-                hit_gate, c_gate, local_gate, yaw_gate, push_gate = self._check_gate(p, pGLL_array, y_GBL_array)
+        for i, p in enumerate(pts):
+            hit_obst, c_xy_obst, push_obst = self._check_obsticle(p, pOLL_array)
 
-                if hit_obst or hit_gate:
-                    if not inside:
-                        inside, entry_i = True, i
-                        if hit_obst:
-                            its_obst, its_gate = True, False
-                            entry_c, entry_push = c_xy, push
-                        else:
-                            its_gate, its_obst = True, False
-                            entry_c, entry_yaw = c_gate, yaw_gate
-                    continue
+            if hit_obst:                       # inside a pillar run -> skip the point
+                if not inside:
+                    inside = True
+                    entry_i = i
+                    entry_c = c_xy_obst
+                    entry_push = push_obst
+                continue
 
-                if inside and its_obst:
-                    inside, its_obst = False, False
-                    p_in, p_out = pts[entry_i], p
-                    mid   = 0.5 * (p_in[:2] + p_out[:2])
-                    d_mid = np.linalg.norm(mid - entry_c)
-                    entry_push = (0.15 + CLEARANCE) + PUSH_GAIN * (0.15 + CLEARANCE - d_mid)
-                    bis = (p_in[:2] - entry_c) + (p_out[:2] - entry_c)
-                    nb  = np.linalg.norm(bis)
-                    if nb < 1e-6:
-                        tv = p_out[:2] - p_in[:2]; bis = np.array([-tv[1], tv[0]]); nb = np.linalg.norm(bis) + 1e-9
-                    new_xy = entry_c + entry_push * bis / nb
-                    new_wp = np.array([new_xy[0], new_xy[1], 0.5 * (p_in[2] + p_out[2])])
-                    hit_gate, *_ = self._check_gate(new_wp, pGLL_array, y_GBL_array)
-                    #r = 0.15 + CLEARANCE    
-                    #if hit_gate:
-                    #    far_push = r + PUSH_GAIN * r
-                    # #   new_xy = entry_c - far_push * bis / nb
-                    #    new_wp = np.array([new_xy[0], new_xy[1], 0.5 * (p_in[2] + p_out[2])])
-                    detours.append((0.5 * (cum[entry_i] + cum[i]), new_wp))
-                    
+            if inside:                         # just exited -> insert the best-side detour
+                inside = False
+                p_in, p_out = pts[entry_i], p
+                new_wp = self._best_detour_side(
+                    entry_c, entry_push, p_in, p_out,
+                    pOLL_array, pGLL_array, y_GBL_array)
+                kept.append(list(new_wp))
 
-                if inside and its_gate:
-                    inside, its_gate = False, False
-                    p_in, p_out = pts[entry_i], p
-                    mid = 0.5 * (p_in + p_out)
-                    c, s = np.cos(entry_yaw), np.sin(entry_yaw)
-                    d = mid - entry_c
-                    ly = -d[0] * s + d[1] * c; lz = d[2]
-                    half_outer = FRAME_WIDTH / 2
-                    d_edges = [half_outer - ly, half_outer + ly, half_outer - lz, half_outer + lz]
-                    k = int(np.argmin(d_edges))
-                    ld = [(0.0, 1.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, 1.0), (0.0, 0.0, -1.0)][k]
-                    push_dir = np.array([ld[0] * c - ld[1] * s, ld[0] * s + ld[1] * c, ld[2]])
-                    # base the apex on the CURRENT clip point, push it PAST the edge + clearance
-                    new_wp = mid + (d_edges[k] + CLEARANCE + PUSH_GAIN * d_edges[k]) * push_dir
-                    detours.append((0.5 * (cum[entry_i] + cum[i]), new_wp))
+            kept.append(list(p))
 
-            if not detours:
-                return wps
-            #breakpoint()
+        if inside:                             # run never exited: keep the last point
+            kept.append(list(pts[-1]))
 
-            items = [(s_wp[k], kept_wps[k]) for k in range(len(t_gates))] + detours
-            items.sort(key=lambda it: it[0])
-            wps = np.array([pt for _, pt in items])
+        return np.asarray(kept)
+    
+    def _best_detour_side(self, entry_c, push, p_in, p_out,
+                        pOLL_array, pGLL_array, y_GBL_array):
+        """Try detouring the pillar on both sides; return the waypoint that clears
+        the gate (and the pillar) with the shorter local path p_in -> wp -> p_out.
 
-        return wps
+        Priority: clears gate, then clears obstacle, then shorter.
+        """
+        z_mid = 0.5 * (p_in[2] + p_out[2])
+
+        bis = (p_in[:2] - entry_c) + (p_out[:2] - entry_c)
+        nb = np.linalg.norm(bis)
+        if nb < 1e-6:                          # tangential pass -> use path normal
+            tv = p_out[:2] - p_in[:2]
+            bis = np.array([-tv[1], tv[0]]); nb = np.linalg.norm(bis) + 1e-9
+        bdir = bis / nb
+        push = push + 1e-3                     # nudge just outside the keep-out radius
+
+        candidates = []
+        for sign in (+1.0, -1.0):
+            xy = entry_c + sign * push * bdir
+            wp = np.array([xy[0], xy[1], z_mid])
+            clears_gate = not self._check_gate(wp, pGLL_array, y_GBL_array)[0]
+            clears_obst = not self._check_obsticle(wp, pOLL_array)[0]
+            length = np.linalg.norm(p_in - wp) + np.linalg.norm(wp - p_out)
+            candidates.append((clears_gate, clears_obst, length, wp))
+
+        # ascending sort: gate-clear first, then obstacle-clear, then shortest
+        candidates.sort(key=lambda c: (not c[0], not c[1], c[2]))
+        return candidates[0][3]
