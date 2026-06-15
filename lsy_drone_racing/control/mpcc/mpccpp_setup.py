@@ -126,6 +126,7 @@ def _build_mpccpp_model(
         cost_cfg["r_thrust"], cost_cfg["r_roll"],
         cost_cfg["r_pitch"],  cost_cfg["r_yaw"],
     ]))
+    # TBD: qc is the speed weight, adjust that 
     track  = ((cost_cfg["q_lag"] + cost_cfg["q_lag_peak"] * qc) * e_lag * e_lag
               + (cost_cfg["q_contour"] + cost_cfg["q_contour_peak"] * qc) * dot(e_cnt, e_cnt)
               + cost_cfg["q_attitude"] * dot(attitude, attitude))

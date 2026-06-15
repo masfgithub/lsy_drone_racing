@@ -396,8 +396,8 @@ class MPCCpp(ControllerInterface):
         self._W_nom = float(W_nom)
         self._H_nom = float(H_nom)
         # Tunnel cross-section target at the gates (half the hole opening).
-        self._gates_information["hole_width"] = 0.05
-        self._gates_information["hole_height"] = 0.05
+        self._gates_information["hole_width"] = 0.05 # TBD change here
+        self._gates_information["hole_height"] = 0.05 # TBD change here
         self._ref = _build_spline_tunnel_ref(
             des_pos_spline=planner["des_pos_spline"],
             gate_positions=obs.pTLL_array,
