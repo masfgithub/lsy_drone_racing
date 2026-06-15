@@ -204,6 +204,7 @@ class DroneRacingPipeline(Controller):
         self._finished = False
         self._config = config
         #self._planner = BasicPlanner(config, t_total)
+        self._t_replan = 0.0
 
         self._planner = SplinePlanner(env_states, info, config,
                                       t_total, max_speed=2.0)
@@ -218,7 +219,7 @@ class DroneRacingPipeline(Controller):
         """Compute the next desired collective thrust and roll/pitch/yaw of the drone."""
         env_states = extract_env_states(obs)
         #self._planner.replan()
-        t = self._tick / self._freq
+        t = self._tick / self._freq - self._t_replan
         self._setpoint = self._planner.setpoint_at(t).copy()
         if self.get_replan_reason(env_states.pTLL_array[env_states.pTLL_index],
                                   env_states.pTLL_index,
@@ -226,6 +227,7 @@ class DroneRacingPipeline(Controller):
             self.nominal_gates_position = env_states.pTLL_array
             self.nominal_obstacles_position = env_states.pOLL_array
             planner_dict = self._planner.plan(env_states, self._tick / self._freq)
+            self._t_replan = self._tick / self._freq
             self._controller.set_ref_traj(planner_dict)
             print('Replanned')
             self._tick_offset = self._tick
@@ -266,7 +268,8 @@ class DroneRacingPipeline(Controller):
         trajectory = self._planner.get_pos_traj()
         draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
         pred_trajectory = self._controller.get_predicted_traj()
-        ref_trajectory = self._controller.get_ref_traj()
+        i = int(self._tick - self._t_replan * self._freq)
+        ref_trajectory = self._controller.get_ref_traj(i)
         # draw_line(sim, trajectory, rgba=np.array([0.58, 0.0, 0.83, 1.0]))
 
         for p in pred_trajectory:
