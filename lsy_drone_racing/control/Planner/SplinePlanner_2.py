@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.interpolate import CubicSpline
 
-from lsy_drone_racing.control.planner import CLEARANCE, FRAME_WIDTH, Planner, Trajectory
+from lsy_drone_racing.control.Planner.planner import CLEARANCE, FRAME_WIDTH, Planner, Trajectory
 
 _MAX_AVOID_ITER = 6     # re-check loop cap
 _OBST_RADIUS    = 0.15  # pillar radius (m), matches _check_obsticle

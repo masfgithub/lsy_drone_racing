@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from lsy_drone_racing.control import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
-from lsy_drone_racing.control.SplinePlanner import SplinePlanner
+from lsy_drone_racing.control.Planner.SplinePlanner import SplinePlanner
 
 if TYPE_CHECKING:
     from crazyflow import Sim

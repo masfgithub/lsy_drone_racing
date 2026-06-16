@@ -5,7 +5,7 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation
 
-from lsy_drone_racing.control.planner import Planner, Trajectory
+from lsy_drone_racing.control.Planner.planner import Planner, Trajectory
 from lsy_drone_racing.control.env_obs import EnvState_t
 
 

@@ -20,8 +20,8 @@ import plotly.graph_objects as go
 from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt   # NOTE: don't force a backend here, so plt.show() can open a window
 
-from lsy_drone_racing.control.SplinePlanner_2 import SplinePlanner
-from lsy_drone_racing.control.planner import FRAME_WIDTH, FRAME_OPENING, CLEARANCE
+from lsy_drone_racing.control.Planner.SplinePlanner_2 import SplinePlanner
+from lsy_drone_racing.control.Planner.planner import FRAME_WIDTH, FRAME_OPENING, CLEARANCE
 
 try:
     from lsy_drone_racing.control.env_obs import EnvState_t

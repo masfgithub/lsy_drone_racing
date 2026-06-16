@@ -15,7 +15,7 @@ from lsy_drone_racing.control.basic_planner import BasicPlanner
 from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.nmpc.nmpc import NMPC
-from lsy_drone_racing.control.SplinePlanner_2 import SplinePlanner
+from lsy_drone_racing.control.Planner.SplinePlanner_2 import SplinePlanner
 
 if TYPE_CHECKING:
     from crazyflow import Sim

@@ -7,7 +7,7 @@ from scipy.spatial.transform import Rotation as R
 from lsy_drone_racing.control.env_obs import EnvState_t
 
 import numpy as np
-from lsy_drone_racing.control.planner import (
+from lsy_drone_racing.control.Planner.planner import (
     DEFAULT_MAX_SPEED, Planner, PlanningError, Trajectory)
 
 __all__ = ["PointMassPlanner"]
