@@ -12,6 +12,7 @@ from crazyflow.sim.visualize import draw_capsule, draw_line, draw_points
 
 from lsy_drone_racing.control.basic_planner import BasicPlanner
 from lsy_drone_racing.control.basic_planner_mpccpp import BasicPlannerMPCCpp
+from lsy_drone_racing.control.SplinePlanner_2 import SplinePlanner
 from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.mpcc.mpcc import MPCC
@@ -369,12 +370,26 @@ class DroneRacingPipeline(Controller):
         t_total = 8
         env_states = extract_env_states(obs)
         self._tick = 0
+        self._freq = config.env.freq
         self._finished = False
+        self._force_replan = False
 
         if CONTROLLER_TYPE == "mpccpp":
-            self._planner = BasicPlannerMPCCpp(env_states, config, t_total)
-            planner_dict = self._planner.plan()
-            self._controller = MPCCpp(env_states, planner_dict, info, config, t_total)
+            # Online adaptive planner: re-roots its trajectory at the current
+            # drone position and is replanned when a gate/obstacle moves. MPCC++
+            # consumes only the path geometry (its own v_theta sets the speed).
+            # The planner is time-parameterized and crashes if t_elapsed >= its
+            # horizon (t_remaining <= 0), so keep that horizon comfortably above
+            # the real flight time. Since MPCC++ ignores the timing, a large
+            # value only makes the sampled path denser -- the geometry is identical.
+            t_plan = 12.0
+            self._planner = SplinePlanner(env_states, info, config, t_plan, max_speed=2.0)
+            trajectory = self._planner.plan(env_states, 0.0)
+            self._controller = MPCCpp(env_states, trajectory, info, config, t_plan)
+            # Replan trigger bookkeeping.
+            self.nominal_gates_position = env_states.pTLL_array
+            self.nominal_obstacles_position = env_states.pOLL_array
+            self._t_replan = 0.0
 
         elif CONTROLLER_TYPE == "mpcc":
             self._planner = BasicPlanner(config, t_total)
@@ -395,19 +410,45 @@ class DroneRacingPipeline(Controller):
             )
 
         # Debug: dump the MPCC++ tube cross-section profile to a PNG on startup.
-        if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):
-            try:
-                plot_tube_width_profile(self._controller._ref, "tube_width_profile.png")
-            except Exception as exc:  # noqa: BLE001 -- never let debug plotting break a run
-                print(f"[pipeline] tube profile plot failed: {exc}")
+        #if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):
+        #    try:
+        #        plot_tube_width_profile(self._controller._ref, "tube_width_profile.png")
+        #    except Exception as exc:  # noqa: BLE001 -- never let debug plotting break a run
+        #        print(f"[pipeline] tube profile plot failed: {exc}")
 
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
     ) -> NDArray[np.floating]:
         """Compute the next desired collective thrust and roll/pitch/yaw of the drone."""
         env_states = extract_env_states(obs)
+        if CONTROLLER_TYPE == "mpccpp":
+            # Replan when a gate/obstacle has moved (or after an episode reset).
+            # The planner re-roots at the current drone position; the controller
+            # then rebuilds its tube and resets theta to 0 (drone = new start).
+            if self._force_replan or self._get_replan_reason(env_states):
+                self.nominal_gates_position = env_states.pTLL_array
+                self.nominal_obstacles_position = env_states.pOLL_array
+                trajectory = self._planner.plan(env_states, self._tick / self._freq)
+                self._t_replan = self._tick / self._freq
+                self._controller.replan_reference(trajectory, env_states)
+                self._force_replan = False
+                print("[MPCC++] Replanned -> tube + theta reset")
+            return self._controller.control(env_states, info)
+
+        # MPCC / NMPC: original flow.
         self._planner.replan()
         return self._controller.control(env_states, info)
+
+    def _get_replan_reason(self, env_states) -> bool:
+        """True if the active gate or any obstacle moved more than 1 cm."""
+        idx = int(getattr(env_states, "pTLL_index", 0))
+        if np.linalg.norm(self.nominal_gates_position[idx] - env_states.pTLL_array[idx]) > 0.01:
+            return True
+        n = min(len(self.nominal_obstacles_position), len(env_states.pOLL_array))
+        for i in range(n):
+            if np.linalg.norm(self.nominal_obstacles_position[i] - env_states.pOLL_array[i]) > 0.01:
+                return True
+        return False
 
     def step_callback(
         self,
@@ -428,6 +469,9 @@ class DroneRacingPipeline(Controller):
         self._tick = 0
         self._controller.reset()
         self._controller.set_tick(self._tick)
+        # Force a fresh replan (re-root + tube rebuild) on the next control step.
+        self._force_replan = True
+        self._t_replan = 0.0
 
     def dump_tube_profile(self, save_path: str = "tube_width_profile.png") -> str | None:
         """Regenerate the MPCC++ tube cross-section profile PNG on demand.

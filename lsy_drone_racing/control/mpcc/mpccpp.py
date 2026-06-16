@@ -195,8 +195,34 @@ class SplineTunnelReference:
         return self.qc_nom + (self.qc_gate - self.qc_nom) * bump
 
 
+def _centerline_points(centerline, n_arc: int = 4000) -> np.ndarray:
+    """Return dense (n, 3) centerline samples from a spline OR a points array.
+
+    Accepts a scipy spline (has ``.x``; sampled over its parameter range) or an
+    already-dense (n, 3) array (e.g. the online planner's Trajectory.positions).
+    """
+    if hasattr(centerline, "x"):                       # scipy CubicSpline over a parameter
+        t0, t1 = float(centerline.x[0]), float(centerline.x[-1])
+        return np.asarray(centerline(np.linspace(t0, t1, n_arc)), dtype=float)
+    return np.asarray(centerline, dtype=float)         # already dense path samples
+
+
+def _planner_centerline(planner):
+    """Extract the centerline source from whatever the planner handed us.
+
+    - Online planner: a Trajectory dataclass -> use its .positions (n, 3).
+    - Warp / basic planner: a dict -> use its 'des_pos_spline' (scipy spline).
+    """
+    if hasattr(planner, "positions"):                  # Trajectory(positions, velocities, ts)
+        return np.asarray(planner.positions, dtype=float)
+    if isinstance(planner, dict) and "des_pos_spline" in planner:
+        return planner["des_pos_spline"]
+    raise TypeError("planner must be a Trajectory (with .positions) or a dict "
+                    "with 'des_pos_spline'.")
+
+
 def _build_spline_tunnel_ref(
-    des_pos_spline,
+    centerline,
     gate_positions: np.ndarray,
     gate_quats_wxyz: np.ndarray,
     gate_w_half: float,
@@ -210,12 +236,13 @@ def _build_spline_tunnel_ref(
     gate_sigma: float = 0.4,
     n_arc: int = 10000,
 ) -> SplineTunnelReference:
-    """Build a SplineTunnelReference from the planner spline and the gate poses.
+    """Build a SplineTunnelReference from the centerline path and the gate poses.
 
     Args:
-        des_pos_spline:  scipy CubicSpline (over time) = the racing line that
-                         already passes through all gates in order.
-        gate_positions:  (M, 3) gate center positions.
+        centerline:      The racing-line geometry, either a scipy spline (warp
+                         planner) or a dense (n, 3) points array (online planner
+                         Trajectory.positions). It already threads the gates.
+        gate_positions:  (M, 3) gate center positions (the gates to pinch at).
         gate_quats_wxyz: (M, 4) gate orientation quaternions (wxyz).
         gate_w_half:     Gate cross-section half-width target at the gates (m).
         gate_h_half:     Gate cross-section half-height target at the gates (m).
@@ -228,14 +255,14 @@ def _build_spline_tunnel_ref(
                          gate) -- NOT a raw contour weight. The cost already holds
                          the magnitudes in q_lag_peak / q_contour_peak / w_speed_gate.
         gate_sigma:      Gaussian sigma for the qc bump (arc-length, m).
-        n_arc:           Samples used to reparameterize the spline to arc length.
+        n_arc:           Resample count when `centerline` is a spline (ignored for
+                         an already-dense points array).
 
     Returns:
         A SplineTunnelReference whose centerline is the arc-length racing line.
     """
-    # 1) reparameterize the planner spline (over time) to arc length.
-    t0, t1 = float(des_pos_spline.x[0]), float(des_pos_spline.x[-1])
-    pts = np.asarray(des_pos_spline(np.linspace(t0, t1, n_arc)))
+    # 1) reparameterize the centerline path to arc length.
+    pts = _centerline_points(centerline, n_arc=n_arc)
     s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
     s_u, idx = np.unique(s, return_index=True)   # strictly increasing knots
     arc_spline = CubicSpline(s_u, pts[idx])
@@ -387,26 +414,41 @@ class MPCCpp(ControllerInterface):
         self._update_obst_params(obs.pOLL_array)
 
         # Build the tunnel reference path.
-        # The tunnel CENTERLINE is the planner's racing line (des_pos_spline),
-        # which already threads every gate in order. We reparameterize it to arc
-        # length and use it directly as pd(theta); the gates are NOT inserted as
-        # spline knots -- each gate center is PROJECTED onto the centerline to
-        # locate where the tunnel pinches. theta therefore runs 0..ref.length
-        # over the true racing line and matches the drone's physical progress.
+        # The CENTERLINE is the planner's racing line -- either a Trajectory
+        # (online planner, re-rooted at the drone) or a dict with des_pos_spline
+        # (warp/basic planner). It already threads the gates; we reparameterize it
+        # to arc length and use it as pd(theta). Gates are PROJECTED onto it to
+        # locate the pinches, so theta runs 0..ref.length over the racing line.
+        # Only the *remaining* gates (pTLL_index:) are pinched, matching the
+        # online planner, which plans from the current target gate onward.
         self._W_nom = float(W_nom)
         self._H_nom = float(H_nom)
         # Tunnel cross-section target at the gates (half the hole opening).
-        self._gates_information["hole_width"] = 0.05 # TBD change here
-        self._gates_information["hole_height"] = 0.05 # TBD change here
+        self._gates_information["hole_width"] = 0.05
+        self._gates_information["hole_height"] = 0.05
+        self._gate_w_half  = self._gates_information["hole_width"] / 2.0
+        self._gate_h_half  = self._gates_information["hole_height"] / 2.0
+        self._tunnel_sigma = float(tunnel_sigma)
+        self._qc_gate      = float(qc_gate)
+        self._gate_sigma   = float(gate_sigma)
+        self._v_theta_max  = float(v_theta_max)
+
+        gi = int(getattr(obs, "pTLL_index", 0))
+        gate_pos  = np.asarray(obs.pTLL_array, dtype=float)[gi:]
+        gate_quat = gates_quat_wxyz[gi:]
         self._ref = _build_spline_tunnel_ref(
-            des_pos_spline=planner["des_pos_spline"],
-            gate_positions=obs.pTLL_array,
-            gate_quats_wxyz=gates_quat_wxyz,
-            gate_w_half=self._gates_information["hole_width"] / 2.0,
-            gate_h_half=self._gates_information["hole_height"] / 2.0,
+            centerline=_planner_centerline(planner),
+            gate_positions=gate_pos,
+            gate_quats_wxyz=gate_quat,
+            gate_w_half=self._gate_w_half,
+            gate_h_half=self._gate_h_half,
             W_nom=W_nom, H_nom=H_nom, tunnel_sigma=tunnel_sigma,
             qc_gate=qc_gate, gate_sigma=gate_sigma,
         )
+        # Gate poses behind the current ref (for the warp planner's change-detect).
+        self._gate_update_tol = 0.02
+        self._ref_gate_pos    = gate_pos.copy()
+        self._ref_gate_quat   = np.asarray(gate_quat, dtype=float).copy()
 
         cost_cfg = {
             "q_lag": q_lag, "q_lag_peak": q_lag_peak,
@@ -643,6 +685,60 @@ class MPCCpp(ControllerInterface):
     def set_ref_traj(self, planner_traj: dict) -> None:
         """No-op: MPCC++ reference is built from gate geometry, not the planner spline."""
         pass
+
+    def replan_reference(self, trajectory, obs: EnvState_t) -> None:
+        """Adopt a freshly planned trajectory as the new tunnel centerline.
+
+        The online planner re-roots its trajectory at the *current drone
+        position*, so adopting it means:
+          1. rebuild the arc-length centerline + tube from trajectory.positions
+             and the remaining gates (pTLL_index:),
+          2. reset progress theta to 0 -- the drone IS the new start,
+          3. re-seed theta_pred and the warm start along the new centerline.
+
+        Call this only when the planner has actually replanned (e.g. on the
+        pipeline's gate/obstacle-moved trigger), not every control step.
+
+        Args:
+            trajectory: The planner's Trajectory (uses .positions), or a dict
+                        with 'des_pos_spline'.
+            obs:        Current observation (drone pose + remaining gate poses).
+        """
+        gi = int(getattr(obs, "pTLL_index", 0))
+        gate_pos  = np.asarray(obs.pTLL_array, dtype=float)[gi:]
+        gate_quat = np.roll(obs.qTLT_array, 1, axis=-1)[gi:]
+
+        self._ref = _build_spline_tunnel_ref(
+            centerline=_planner_centerline(trajectory),
+            gate_positions=gate_pos,
+            gate_quats_wxyz=gate_quat,
+            gate_w_half=self._gate_w_half,
+            gate_h_half=self._gate_h_half,
+            W_nom=self._W_nom, H_nom=self._H_nom,
+            tunnel_sigma=self._tunnel_sigma,
+            qc_gate=self._qc_gate, gate_sigma=self._gate_sigma,
+        )
+        self._ref_gate_pos  = gate_pos.copy()
+        self._ref_gate_quat = np.asarray(gate_quat, dtype=float).copy()
+
+        # theta resets to the start: the new centerline begins at the drone.
+        self._last_theta = 0.0
+        self._finished   = False
+        v_guess = float(np.clip(np.linalg.norm(obs.vBLL), 0.5, self._v_theta_max))
+        self._theta_pred = np.clip(
+            np.arange(self._N + 1) * self._dt * v_guess, 0.0, self._ref.length
+        )
+        self._reinit_warmstart()
+
+    def _reinit_warmstart(self) -> None:
+        """Re-seed _x_warm / _u_warm with hover states along the current centerline.
+
+        Solver stage values are (re)applied from these caches at the next
+        control() call, which also pins node 0 to the measured state.
+        """
+        self._x_warm = [self._nominal_state(float(self._theta_pred[k]))
+                        for k in range(self._N + 1)]
+        self._u_warm = [np.zeros(self._nu) for _ in range(self._N)]
 
     def reset(self) -> None:
         """Reset internal controller state for a new episode."""
