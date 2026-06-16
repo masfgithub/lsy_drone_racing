@@ -316,7 +316,7 @@ class MPCCpp(ControllerInterface):
         t_total: int,
         N_horizon: int = 20,
         T_horizon: float = 0.5,
-        mu: float = 15.0,
+        mu: float = 8.0,
         q_lag: float = 80.0,
         q_lag_peak: float = 500.0,
         q_contour: float = 120.0,
