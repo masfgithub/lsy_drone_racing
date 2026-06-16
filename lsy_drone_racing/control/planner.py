@@ -16,9 +16,9 @@ if TYPE_CHECKING:
 __all__ = ["Trajectory", "Planner", "DEFAULT_MAX_SPEED"]
 
 DEFAULT_MAX_SPEED = 12.0  # m/s
-FRAME_WIDTH = 0.82
+FRAME_WIDTH = 0.7
 FRAME_OPENING = 0.4
-FRAME_THICK = 0.3
+FRAME_THICK = 0.05
 POST_WIDTH = 0.2
 CLEARANCE = 0.1
 
@@ -131,7 +131,7 @@ class Planner(ABC):
         # Half-dimensions including clearance margins
         half_outer = (FRAME_WIDTH / 2)
         half_open  = FRAME_OPENING / 2
-        half_thick = FRAME_THICK + CLEARANCE
+        half_thick = FRAME_THICK
         half_post_width = POST_WIDTH/2 + CLEARANCE
 
         # Difference trajectory point to all gate centers
