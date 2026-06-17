@@ -318,9 +318,9 @@ class MPCCpp(ControllerInterface):
         T_horizon: float = 0.5,
         mu: float = 12.0,
         q_lag: float = 80.0,
-        q_lag_peak: float = 500.0,
+        q_lag_peak: float = 50.0,
         q_contour: float = 120.0,
-        q_contour_peak: float = 700.0,
+        q_contour_peak: float = 100.0,
         q_attitude: float = 1.0,
         r_thrust: float = 0.2,
         r_roll: float = 0.3,
@@ -424,8 +424,8 @@ class MPCCpp(ControllerInterface):
         self._W_nom = float(W_nom)
         self._H_nom = float(H_nom)
         # Tunnel cross-section target at the gates (half the hole opening).
-        self._gates_information["hole_width"] = 0.05
-        self._gates_information["hole_height"] = 0.05
+        self._gates_information["hole_width"] = 0.1
+        self._gates_information["hole_height"] = 0.1
         self._gate_w_half  = self._gates_information["hole_width"] / 2.0
         self._gate_h_half  = self._gates_information["hole_height"] / 2.0
         self._tunnel_sigma = float(tunnel_sigma)
