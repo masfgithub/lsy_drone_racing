@@ -326,7 +326,7 @@ class MPCCpp(ControllerInterface):
         r_roll: float = 0.3,
         r_pitch: float = 0.3,
         r_yaw: float = 0.5,
-        w_speed_gate: float = 6.0,
+        w_speed_gate: float = 5.5,
         W_nom: float = 0.3,
         H_nom: float = 0.3,
         tunnel_sigma: float = 0.4,
