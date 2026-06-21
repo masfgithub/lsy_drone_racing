@@ -331,6 +331,10 @@ class MPCCpp(ControllerInterface):
         H_nom: float = 0.3,
         tunnel_sigma: float = 0.4,
         v_theta_max: float = 3.0,
+        df_cmd_rate_max: float | None = 5.0,
+        dr_cmd_rate_max: float | None = None,
+        dp_cmd_rate_max: float | None = None,
+        dy_cmd_rate_max: float | None = None,
         qc_gate: float = 1.0,
         gate_sigma: float = 0.4,
         tunnel_soft: bool = True,
@@ -367,6 +371,13 @@ class MPCCpp(ControllerInterface):
             tunnel_sigma:       Gaussian sigma for tunnel pinch at gates (m arc-length).
             v_theta_max:        Max progress speed v_theta (m/s of arc length). Must
                                 exceed the drone's along-track speed or theta lags.
+            df_cmd_rate_max:    Slew-rate limit on the collective-thrust command
+                                (|df_cmd| <= value, N/s). Finite value activates it;
+                                None => inactive. Per step the command moves at most
+                                df_cmd_rate_max * (T_horizon / N_horizon).
+            dr_cmd_rate_max:    Slew-rate limit on the roll command (rad/s); None off.
+            dp_cmd_rate_max:    Slew-rate limit on the pitch command (rad/s); None off.
+            dy_cmd_rate_max:    Slew-rate limit on the yaw command (rad/s); None off.
             qc_gate:            Peak of the gate-proximity bump (0..1) that scales the
                                 near-gate tracking weights and the gate speed penalty.
                                 Raise to slow/tighten more at gates, lower to fly faster.
@@ -473,6 +484,10 @@ class MPCCpp(ControllerInterface):
             obstacle_slack_lin=obstacle_slack_lin,
             obstacle_slack_quad=obstacle_slack_quad,
             v_theta_max=v_theta_max,
+            df_cmd_rate_max=df_cmd_rate_max,
+            dr_cmd_rate_max=dr_cmd_rate_max,
+            dp_cmd_rate_max=dp_cmd_rate_max,
+            dy_cmd_rate_max=dy_cmd_rate_max,
         )
         self._nx = self._ocp.model.x.rows()
         self._nu = self._ocp.model.u.rows()

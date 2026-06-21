@@ -181,6 +181,11 @@ def create_ocp_solver_mpccpp(
     obstacle_slack_lin: float = 1e4,
     obstacle_slack_quad: float = 1e4,
     v_theta_max: float = 5.0,
+    df_cmd_rate_max: float | None = 5.0,
+    dr_cmd_rate_max: float | None = None,
+    dp_cmd_rate_max: float | None = None,
+    dy_cmd_rate_max: float | None = None,
+    rate_limit_default: float = 10.0,
     verbose: bool = False,
 ) -> tuple[AcadosOcpSolver, AcadosOcp]:
     """Build the MPCC++ acados solver.
@@ -201,6 +206,22 @@ def create_ocp_solver_mpccpp(
         v_theta_max:        Upper bound on the progress speed v_theta (m/s of arc
                             length). The previous value of 2.0 throttled theta
                             below the drone's along-track speed.
+        df_cmd_rate_max:    Slew-rate limit on the collective-thrust command
+                            (|df_cmd| <= value, N/s). A finite value ACTIVATES the
+                            limit; None falls back to rate_limit_default (inactive).
+                            Per control step the command can change by at most
+                            df_cmd_rate_max * dt, dt = Tf / N. Default 5.0 N/s is a
+                            starting point keyed to the thrust-lag timescale
+                            (tau ~ 0.1 s from f_col dynamics); tune to taste.
+        dr_cmd_rate_max:    Slew-rate limit on the roll command (|dr_cmd| <= value,
+                            rad/s). None => inactive (rate_limit_default).
+        dp_cmd_rate_max:    Slew-rate limit on the pitch command (rad/s). None =>
+                            inactive.
+        dy_cmd_rate_max:    Slew-rate limit on the yaw command (rad/s). None =>
+                            inactive.
+        rate_limit_default: Wide symmetric bound applied to any command-rate input
+                            whose *_cmd_rate_max is None (matches the previous
+                            hard-coded +/-10, i.e. effectively unconstrained).
         verbose:            Pass to AcadosOcpSolver.
 
     Returns:
@@ -235,9 +256,27 @@ def create_ocp_solver_mpccpp(
     ocp.constraints.ubx    = np.array([thrust_max, thrust_max,  1.57,  1.57,  1.57])
     ocp.constraints.idxbx  = np.array([9, 10, 11, 12, 13])
 
-    # ── Input box constraints: df_cmd, dr_cmd, dp_cmd, dy_cmd, v_theta ───────
-    ocp.constraints.lbu   = np.array([-10.0, -10.0, -10.0, -10.0, 0.0])
-    ocp.constraints.ubu   = np.array([ 10.0,  10.0,  10.0,  10.0, v_theta_max])
+    # ── Input box constraints: command-rate inputs + progress speed ──────────
+    # The four command-rate inputs [df_cmd, dr_cmd, dp_cmd, dy_cmd] are the time
+    # derivatives of the command STATES [f_cmd, r_cmd, p_cmd, y_cmd]. Node 0 pins
+    # each command state to the last applied value, so bounding a rate input is a
+    # true slew-rate limit on the corresponding command -- enforced within the
+    # horizon AND across the MPC-step boundary. A finite *_cmd_rate_max activates
+    # that input's limit (physical units: N/s for thrust, rad/s for attitude);
+    # None leaves it at rate_limit_default (wide => effectively unconstrained).
+    # v_theta is the virtual progress input, not a drone command: it keeps its
+    # own [0, v_theta_max] box and is excluded from the slew mechanism.
+    def _rate_bound(val: float | None) -> float:
+        return float(rate_limit_default) if val is None else float(val)
+
+    du_rate = np.array([
+        _rate_bound(df_cmd_rate_max),   # collective-thrust command rate
+        _rate_bound(dr_cmd_rate_max),   # roll command rate
+        _rate_bound(dp_cmd_rate_max),   # pitch command rate
+        _rate_bound(dy_cmd_rate_max),   # yaw command rate
+    ])
+    ocp.constraints.lbu   = np.concatenate([-du_rate, [0.0]])
+    ocp.constraints.ubu   = np.concatenate([ du_rate, [v_theta_max]])
     ocp.constraints.idxbu = np.array([0, 1, 2, 3, 4])
 
     # ── Nonlinear constraints (h >= 0) ────────────────────────────────────────
