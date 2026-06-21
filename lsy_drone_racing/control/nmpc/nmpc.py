@@ -30,7 +30,12 @@ class NMPC(ControllerInterface):
         use_soft: bool = False,
         gate_weight: float = 1e4,
         obstacle_weight: float = 1e4,
-        post_weight: float= 1e4
+        post_weight: float= 1e4,
+        use_input_rate: bool = True,
+        df_cmd_rate_max: float | None = 5.0,
+        dr_cmd_rate_max: float | None = None,
+        dp_cmd_rate_max: float | None = None,
+        dy_cmd_rate_max: float | None = None,
     ):
         """Initialize the attitude controller.
 
@@ -44,6 +49,14 @@ class NMPC(ControllerInterface):
                              If False, use hard constraints (con_h_expr).
             gate_weight:     Soft penalty weight for gate violations.
             obstacle_weight: Soft penalty weight for obstacle violations.
+            use_input_rate:  If True, use the rate-augmented model: the commands
+                             [r_cmd, p_cmd, y_cmd, f_cmd] become states (16-state
+                             model) and the inputs become their rates, so the input
+                             box acts as a per-command slew-rate limit. False
+                             keeps the baseline 12-state model bit-identical.
+            df/dr/dp/dy_cmd_rate_max: Per-command slew limits (thrust N/s, attitude
+                             rad/s); only used when use_input_rate=True. Finite value
+                             activates; None => inactive (wide default).
         """
         super().__init__(obs, planner, info, config, t_total)
         self._freq = config.env.freq
@@ -52,9 +65,15 @@ class NMPC(ControllerInterface):
         self._T_HORIZON = self._N * self._dt
         self._t_total = t_total
         self._use_soft = use_soft
+        self._use_input_rate = use_input_rate
 
         self.set_ref_traj(planner)
         self.drone_params = load_params("so_rpy", config.sim.drone_model)
+        self._hover = float(self.drone_params["mass"] * -self.drone_params["gravity_vec"][-1])
+        # Last applied command [r_cmd, p_cmd, y_cmd, f_cmd]; pins the command states
+        # at node 0 each step (only used when use_input_rate=True). Bootstrapped to
+        # upright + hover.
+        self._last_u_cmd = np.array([0.0, 0.0, 0.0, self._hover])
 
         self._gates_information = {
             "total_length": 0.8,
@@ -91,7 +110,12 @@ class NMPC(ControllerInterface):
                 self._obstacles,
                 gate_weight=gate_weight,
                 obstacle_weight=obstacle_weight,
-                post_weight=post_weight
+                post_weight=post_weight,
+                use_input_rate=self._use_input_rate,
+                df_cmd_rate_max=df_cmd_rate_max,
+                dr_cmd_rate_max=dr_cmd_rate_max,
+                dp_cmd_rate_max=dp_cmd_rate_max,
+                dy_cmd_rate_max=dy_cmd_rate_max,
             )
 
         else:
@@ -110,7 +134,12 @@ class NMPC(ControllerInterface):
             self._obstacles = get_obstacle_objects(obs.pOLL_array, self._obstacles_information)
 
             self._acados_ocp_solver, self._ocp = create_ocp_solver(
-                self._T_HORIZON, self._N, self.drone_params, self._gates, self._obstacles
+                self._T_HORIZON, self._N, self.drone_params, self._gates, self._obstacles,
+                use_input_rate=self._use_input_rate,
+                df_cmd_rate_max=df_cmd_rate_max,
+                dr_cmd_rate_max=dr_cmd_rate_max,
+                dp_cmd_rate_max=dp_cmd_rate_max,
+                dy_cmd_rate_max=dy_cmd_rate_max,
             )
             self._env = None
 
@@ -137,6 +166,11 @@ class NMPC(ControllerInterface):
         """Initialise solver with a straight-line trajectory."""
         x0 = np.concatenate((pBLL, np.zeros(3), np.zeros(3), np.zeros(3)))
         x_ref = np.concatenate((pos_ref, np.zeros(3), np.zeros(3), np.zeros(3)))
+        if self._use_input_rate:
+            # Append the command-state block [r_cmd, p_cmd, y_cmd, f_cmd] = upright+hover.
+            cmd0 = np.array([0.0, 0.0, 0.0, self._hover])
+            x0 = np.concatenate((x0, cmd0))
+            x_ref = np.concatenate((x_ref, cmd0))
         x_init = np.linspace(x0, x_ref, self._N + 1)
         for k in range(self._N + 1):
             self.x_pred[k] = x_init[k]
@@ -153,6 +187,10 @@ class NMPC(ControllerInterface):
         rpy = R.from_quat(obs.qBLB).as_euler("xyz")
         drpy = ang_vel2rpy_rates(obs.qBLB, obs.wBLL)
         x0 = np.concatenate((obs.pBLL, rpy, obs.vBLL, drpy))
+        if self._use_input_rate:
+            # Pin the command states at node 0 to the last applied command, which
+            # makes the rate box a slew limit across the MPC-step boundary too.
+            x0 = np.concatenate((x0, self._last_u_cmd))
         self._acados_ocp_solver.set(0, "lbx", x0)
         self._acados_ocp_solver.set(0, "ubx", x0)
         self._acados_ocp_solver.set(0, "x", x0)
@@ -178,6 +216,9 @@ class NMPC(ControllerInterface):
         yref_e[0:3] = self._waypoints_pos[i + self._N]
         yref_e[5] = self._waypoints_yaw[i + self._N]
         yref_e[6:9] = self._waypoints_vel[i + self._N]
+        if self._use_input_rate:
+            # Terminal f_cmd command-state reference = hover (index 15).
+            yref_e[15] = self._hover
 
         if self._use_soft:
             yref_e_full = np.zeros(self._ny_e + 1)
@@ -210,6 +251,18 @@ class NMPC(ControllerInterface):
             self.u_pred[k] = self._acados_ocp_solver.get(k, "u")
         self._u_traj = self.u_pred.copy()
 
+    def _applied_command(self, step: int) -> np.ndarray:
+        """Command [r_cmd, p_cmd, y_cmd, f_cmd] to apply at horizon offset ``step``.
+
+        Baseline: the inputs ARE the commands -> u_pred[step].
+        Augmented: the commands are states -> read the command block of the
+        predicted state one node ahead (x_pred[1+step][12:16]).
+        """
+        if self._use_input_rate:
+            k = min(1 + step, self._N)
+            return self.x_pred[k][12:16].copy()
+        return self.u_pred[step].copy()
+
     def solve(self, obs: EnvState_t, i: int) -> np.ndarray:
         """Solve the OCP and return the control input."""
         STATUS_MEANINGS = {
@@ -229,16 +282,22 @@ class NMPC(ControllerInterface):
                 print(f"[MPC] {STATUS_MEANINGS[status]} — accepting with caution.")
             self._infeas_counter = 0
             self._extract_solution()
-            return self._u_traj[0]
+            applied = self._applied_command(0)
+            if self._use_input_rate:
+                self._last_u_cmd = np.asarray(applied, dtype=float).copy()
+            return applied
 
         # ── Unrecoverable — open-loop fallback ────────────────────────────────
         self._infeas_counter = min(self._infeas_counter + 1, self._N - 1)
         print(
             f"[MPC] {STATUS_MEANINGS.get(status, 'UNKNOWN')} — "
             f"infeasible for {self._infeas_counter} consecutive steps. "
-            f"Returning stored u_traj[{self._infeas_counter}]."
+            f"Returning stored command[{self._infeas_counter}]."
         )
-        return self._u_traj[self._infeas_counter]
+        applied = self._applied_command(self._infeas_counter)
+        if self._use_input_rate:
+            self._last_u_cmd = np.asarray(applied, dtype=float).copy()
+        return applied
 
     def set_ref_traj(self, planner_traj: dict):
         """Set reference trajectory from planner."""
