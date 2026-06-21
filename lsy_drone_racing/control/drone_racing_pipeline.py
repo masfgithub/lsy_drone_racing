@@ -499,8 +499,8 @@ class DroneRacingPipeline(Controller):
             draw_points(sim, p.reshape(1, -1), rgba=(0.58, 0.0, 0.83, 0.5), size=0.01)
 
         # MPCC++ prediction tunnel (cyan edges + yellow corners)
-        if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):
-            _draw_mpccpp_tunnel(sim, self._controller)
+        #if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):
+        #    _draw_mpccpp_tunnel(sim, self._controller)
         # Reference trajectory (red dots)
         #ref_trajectory = self._controller.get_ref_traj()
         #for p in ref_trajectory:
