@@ -41,6 +41,7 @@ from lsy_drone_racing.control.mpcc.mpccpp_setup import (
     _TD,
     _THETA_BAR,
     _WIDX,
+    WEDGE_NP,
     num_params,
 )
 from lsy_drone_racing.control.mpcc_test.mpccpp_reference import (
@@ -221,6 +222,60 @@ def _planner_centerline(planner):
                     "with 'des_pos_spline'.")
 
 
+def _gate_anchored_centerline(
+    start_pos: np.ndarray,
+    gate_centers: np.ndarray,
+    gate_normals: np.ndarray,
+    gate_tangent_len: float = 0.3,
+    n_dense: int = 4000,
+) -> np.ndarray:
+    """Build a GATE-anchored centerline (Krinner et al., RSS 2024, Sec. IV-A).
+
+    The curve passes through every gate center and, AT each gate, has its tangent
+    aligned with the gate normal -- achieved with two collinear helper knots
+    ``c +/- delta * n`` around each center. It begins at ``start_pos`` (the drone),
+    so theta = 0 maps to the drone and runs to the final gate. Unlike the
+    planner-anchored centerline, this curve is fixed by the gate geometry alone,
+    so the tunnel pinch sits ON the real gate opening rather than wherever the
+    planner happened to route.
+
+    The knots are fitted to a cubic and densely resampled, so the downstream
+    arc-length reparameterisation in ``_build_spline_tunnel_ref`` is accurate
+    (theta == arc length, |centerline'| == 1).
+
+    Args:
+        start_pos:        (3,) current drone position -- first centerline knot.
+        gate_centers:     (M, 3) gate center positions (in pass order).
+        gate_normals:     (M, 3) gate through-normals (unit; from gate quats).
+        gate_tangent_len: Helper-knot offset delta (m) along the normal. Larger =
+                          straighter approach/exit through the gate; keep below the
+                          gate spacing. Assumes the drone start is upstream of gate 0.
+        n_dense:          Dense resample count for the fitted centerline.
+
+    Returns:
+        (n_dense, 3) densely sampled gate-threading centerline.
+    """
+    delta = float(gate_tangent_len)
+    centers = np.asarray(gate_centers, dtype=float)
+    normals = np.asarray(gate_normals, dtype=float)
+
+    knots = [np.asarray(start_pos, dtype=float)]
+    for c, n in zip(centers, normals):
+        nn = n / (np.linalg.norm(n) + 1e-12)
+        knots.append(c - delta * nn)   # pre-gate helper: tangent -> gate normal
+        knots.append(c)                # gate center (curve passes through it)
+        knots.append(c + delta * nn)   # post-gate helper
+    knots = np.asarray(knots, dtype=float)
+
+    # Fit a cubic through the (sparse) knots and resample densely, so that the
+    # arc-length reparameterisation downstream is accurate.
+    seg = np.linalg.norm(np.diff(knots, axis=0), axis=1)
+    u   = np.concatenate([[0.0], np.cumsum(seg)])
+    u_u, idx = np.unique(u, return_index=True)   # drop coincident knots
+    spline = CubicSpline(u_u, knots[idx])
+    return spline(np.linspace(0.0, float(u_u[-1]), n_dense))
+
+
 def _build_spline_tunnel_ref(
     centerline,
     gate_positions: np.ndarray,
@@ -337,12 +392,16 @@ class MPCCpp(ControllerInterface):
         dy_cmd_rate_max: float | None = None,
         qc_gate: float = 1.0,
         gate_sigma: float = 0.4,
+        tunnel_mode: str = "planner",
+        gate_tangent_len: float = 0.3,
         tunnel_soft: bool = True,
         tunnel_slack_lin: float = 1e3,
         tunnel_slack_quad: float = 1e3,
         obstacle_soft: bool = True,
         obstacle_slack_lin: float = 1e4,
         obstacle_slack_quad: float = 1e4,
+        gate_soft: bool = True,
+        gate_weight: float = 3*1e3,
         n_obstacles: int | None = None,
     ):
         """Initialize the MPCC++ controller.
@@ -383,12 +442,26 @@ class MPCCpp(ControllerInterface):
                                 Raise to slow/tighten more at gates, lower to fly faster.
             gate_sigma:         Arc-length width (m) of that bump. Keep below ~half the
                                 gate spacing so bumps don't overlap and brake everywhere.
+            tunnel_mode:        Tunnel centerline source. "gate" (default) anchors the
+                                centerline to the gate centers with tangents along the
+                                gate normals, so the tube/pinch sit ON the real gate
+                                openings (Krinner et al. Sec. IV-A). "planner" uses the
+                                planner's racing line as the centerline (legacy).
+            gate_tangent_len:   Helper-knot offset delta (m) along each gate normal for
+                                the "gate" centerline; larger = straighter through-gate
+                                approach. Unused in "planner" mode.
             tunnel_soft:        If True, soften tunnel constraints via slacks.
             tunnel_slack_lin:   Linear slack penalty for tunnel.
             tunnel_slack_quad:  Quadratic slack penalty for tunnel.
             obstacle_soft:      If True, soften obstacle constraints via slacks.
             obstacle_slack_lin: Linear slack penalty for obstacles.
             obstacle_slack_quad:Quadratic slack penalty for obstacles.
+            gate_soft:          If True, add a soft WedgeWindow gate-frame penalty
+                                to the cost (one per gate, using the REAL gate
+                                opening, independent of the tunnel pinch). This is
+                                the backup that keeps the drone off the physical
+                                frame if the soft tunnel is violated.
+            gate_weight:        Weight of the soft gate-frame penalty.
             n_obstacles:        OCP obstacle slots. Defaults to len(obs.pOLL_array).
         """
         super().__init__(obs, planner, info, config, t_total)
@@ -406,6 +479,10 @@ class MPCCpp(ControllerInterface):
             "thickness": 0.35,   "margin": 0.05,
         }
         self._obstacles_information = {"d_min": 0.15, "total_height": 2.0}
+        # Real gate geometry for the soft frame penalty, captured BEFORE the
+        # tunnel-pinch override below shrinks hole_width/hole_height. The frame
+        # bars must span the true 0.23 opening, not the 0.1 tunnel pinch.
+        self._gate_frame_info = dict(self._gates_information)
 
         self.drone_params = load_params("so_rpy", config.sim.drone_model)
         self._mass    = float(self.drone_params["mass"])
@@ -418,7 +495,16 @@ class MPCCpp(ControllerInterface):
 
         n_obs = len(obs.pOLL_array) if n_obstacles is None else n_obstacles
         self._n_obstacles = n_obs
-        self._npar = num_params(n_obs)
+
+        # Gate-frame penalty slots: one per gate (all gates, fixed count), so the
+        # parameter size stays constant; passed gates contribute ~0 penalty.
+        self._gate_soft   = bool(gate_soft)
+        self._gate_weight = float(gate_weight)
+        self._n_gates     = len(obs.pTLL_array) if self._gate_soft else 0
+        self._gate_frame_params = np.zeros((self._n_gates, WEDGE_NP))
+        self._update_gate_frame_params(obs.pTLL_array, gates_quat_wxyz)
+
+        self._npar = num_params(n_obs, self._n_gates)
 
         # Obstacle parameter slots [xo, yo, ro] (updated online each step)
         self._obst_params = np.zeros((n_obs, OBST_DIM))
@@ -443,12 +529,14 @@ class MPCCpp(ControllerInterface):
         self._qc_gate      = float(qc_gate)
         self._gate_sigma   = float(gate_sigma)
         self._v_theta_max  = float(v_theta_max)
+        self._tunnel_mode  = str(tunnel_mode)
+        self._gate_tangent_len = float(gate_tangent_len)
 
         gi = int(getattr(obs, "pTLL_index", 0))
         gate_pos  = np.asarray(obs.pTLL_array, dtype=float)[gi:]
         gate_quat = gates_quat_wxyz[gi:]
         self._ref = _build_spline_tunnel_ref(
-            centerline=_planner_centerline(planner),
+            centerline=self._centerline_source(planner, obs, gate_pos, gate_quat),
             gate_positions=gate_pos,
             gate_quats_wxyz=gate_quat,
             gate_w_half=self._gate_w_half,
@@ -488,6 +576,8 @@ class MPCCpp(ControllerInterface):
             dr_cmd_rate_max=dr_cmd_rate_max,
             dp_cmd_rate_max=dp_cmd_rate_max,
             dy_cmd_rate_max=dy_cmd_rate_max,
+            n_gates=self._n_gates,
+            gate_weight=self._gate_weight,
         )
         self._nx = self._ocp.model.x.rows()
         self._nu = self._ocp.model.u.rows()
@@ -509,6 +599,21 @@ class MPCCpp(ControllerInterface):
     # ──────────────────────────────────────────────────────────────────────────
     # Reference path construction
     # ──────────────────────────────────────────────────────────────────────────
+
+    def _centerline_source(self, planner, obs, gate_pos, gate_quat):
+        """Pick the tunnel centerline according to ``self._tunnel_mode``.
+
+        "gate":    a gate-anchored centerline through the gate centers with
+                   tangents along the gate normals, rooted at the current drone
+                   position (the tube sits ON the real gate openings).
+        "planner": the planner's racing line (legacy behaviour).
+        """
+        if self._tunnel_mode == "gate":
+            normals = _gate_normals_from_quats(gate_quat)
+            return _gate_anchored_centerline(
+                obs.pBLL, gate_pos, normals, self._gate_tangent_len
+            )
+        return _planner_centerline(planner)
 
     @staticmethod
     def _build_tunnel_ref(
@@ -545,6 +650,20 @@ class MPCCpp(ControllerInterface):
         self._obst_params[:m, 2] = self._obstacles_information["d_min"]
         # unused slots keep ro=0 → constraint trivially satisfied
 
+    def _update_gate_frame_params(self, positions: np.ndarray, quats_wxyz: np.ndarray) -> None:
+        """Refresh gate-frame WedgeWindow params from current gate poses.
+
+        Uses the REAL gate opening (``self._gate_frame_info``), independent of the
+        tunnel pinch. Builds one WedgeWindow per gate and stores its 17-param
+        vector; these are written into every node's parameter block.
+        """
+        if self._n_gates == 0:
+            return
+        frames = get_gate_objects(positions, quats_wxyz, self._gate_frame_info)
+        m = min(len(frames), self._n_gates)
+        for i in range(m):
+            self._gate_frame_params[i] = frames[i].param_vector()
+
     # ──────────────────────────────────────────────────────────────────────────
     # Per-node parameter vector
     # ──────────────────────────────────────────────────────────────────────────
@@ -572,6 +691,11 @@ class MPCCpp(ControllerInterface):
         if self._n_obstacles > 0:
             pvec[_OBST_START: _OBST_START + OBST_DIM * self._n_obstacles] = (
                 self._obst_params.reshape(-1)
+            )
+        if self._n_gates > 0:
+            gstart = _OBST_START + OBST_DIM * self._n_obstacles
+            pvec[gstart: gstart + WEDGE_NP * self._n_gates] = (
+                self._gate_frame_params.reshape(-1)
             )
         return pvec
 
@@ -620,6 +744,7 @@ class MPCCpp(ControllerInterface):
         self._gates     = get_gate_objects(obs.pTLL_array, gates_quat_wxyz, self._gates_information)
         self._obstacles = get_obstacle_objects(obs.pOLL_array, self._obstacles_information)
         self._update_obst_params(obs.pOLL_array)
+        self._update_gate_frame_params(obs.pTLL_array, gates_quat_wxyz)
 
         if self._last_theta >= self._ref.length:
             self._finished = True
@@ -724,7 +849,7 @@ class MPCCpp(ControllerInterface):
         gate_quat = np.roll(obs.qTLT_array, 1, axis=-1)[gi:]
 
         self._ref = _build_spline_tunnel_ref(
-            centerline=_planner_centerline(trajectory),
+            centerline=self._centerline_source(trajectory, obs, gate_pos, gate_quat),
             gate_positions=gate_pos,
             gate_quats_wxyz=gate_quat,
             gate_w_half=self._gate_w_half,

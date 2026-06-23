@@ -507,18 +507,18 @@ class DroneRacingPipeline(Controller):
         #    draw_points(sim, p.reshape(1, -1), rgba=(1.0, 0.0, 0.0, 0.5), size=0.01)
 
         # Gates
-        #for gate in self._controller._gates:
-        #    _draw_wedge_gate(
-        #        sim,
-        #        position=gate.position,
-        #        quaternion=gate.quaternion,
-        #        total_length=gate.total_length,
-        #        total_height=gate.total_height,
-        #        hole_width=gate.hole_width,
-        #        hole_height=gate.hole_height,
-        #        thickness=gate.thickness,
-        #        rgba=np.array([0.0, 0.5, 1.0, 1.0]),
-        #    )
+        for gate in self._controller._gates:
+            _draw_wedge_gate(
+                sim,
+                position=gate.position,
+                quaternion=gate.quaternion,
+                total_length=gate.total_length,
+                total_height=gate.total_height,
+                hole_width=gate.hole_width,
+                hole_height=gate.hole_height,
+                thickness=gate.thickness,
+                rgba=np.array([0.0, 0.5, 1.0, 1.0]),
+            )
 
         # Obstacles
         #for obs in self._controller._obstacles:

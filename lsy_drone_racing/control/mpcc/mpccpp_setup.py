@@ -1,6 +1,6 @@
 """MPCC++ acados OCP setup: RPY drone model + gate-tunnel constraints + obstacle avoidance.
 
-Per-node parameter layout (20 + 3*n_obstacles entries):
+Per-node parameter layout (20 + 3*n_obstacles + 17*n_gates entries):
     p[0:3]   = pd          (reference position at theta_bar)
     p[3:6]   = td          (reference tangent)
     p[6:9]   = pdd         (reference 2nd derivative)
@@ -11,11 +11,17 @@ Per-node parameter layout (20 + 3*n_obstacles entries):
     p[15:18] = b           (tunnel vertical axis, unit vector)
     p[18]    = W           (tunnel half-width)
     p[19]    = H           (tunnel half-height)
-    p[20+]   = obstacles   ([xo, yo, ro] per obstacle)
+    p[20  : 20 + 3*n_obstacles]                 = obstacles ([xo, yo, ro] each)
+    p[20 + 3*n_obstacles : .. + 17*n_gates]     = gate frames (WedgeWindow params)
 
 Nonlinear constraints (all >= 0):
     Tunnel (4):    [W + n·d, W − n·d, H + b·d, H − b·d]  where d = pos − pd
     Obstacles (k): (px − xo_i)^2 + (py − yo_i)^2 − ro_i^2  for i = 0..k−1
+
+Soft gate-frame penalty (added to the EXTERNAL cost, not a constraint):
+    gate_weight * sum_g WedgeWindow.casadi_penalty_sym(pos, p_g)
+    The penalty is 0 when the drone is clear of the gate frame and grows
+    quadratically as it penetrates any of the four wedge bars.
 """
 
 from __future__ import annotations
@@ -24,10 +30,16 @@ import numpy as np
 from acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
 from casadi import DM, MX, cos, dot, norm_2, sin, vertcat
 
+try:
+    from wedge_window import WedgeWindow
+except ImportError:
+    from lsy_drone_racing.control.nmpc.wedge_window import WedgeWindow
+
 # ── Parameter layout constants (mirror mpcc_test/mpccpp_model.py) ─────────────
 NP_BASE = 20       # 12 cost params + 8 tunnel-frame params
 N_TUNNEL = 4       # four tunnel halfspace constraints
 OBST_DIM = 3       # [xo, yo, ro] per obstacle
+WEDGE_NP = WedgeWindow.N_PARAMS   # 17 params per gate frame (soft penalty)
 
 _PD  = slice(0, 3)
 _TD  = slice(3, 6)
@@ -42,21 +54,27 @@ _HIDX = 19
 _OBST_START = 20
 
 
-def num_params(n_obstacles: int) -> int:
-    """Total parameter vector length for given obstacle count."""
-    return NP_BASE + OBST_DIM * n_obstacles
+def num_params(n_obstacles: int, n_gates: int = 0) -> int:
+    """Total parameter vector length for given obstacle and gate-frame counts."""
+    return NP_BASE + OBST_DIM * n_obstacles + WEDGE_NP * n_gates
 
 
 def _build_mpccpp_model(
     parameters: dict,
     n_obstacles: int,
     cost_cfg: dict,
+    n_gates: int = 0,
+    gate_weight: float = 1e3,
 ) -> AcadosModel:
     """Build the MPCC++ acados model (RPY drone + MPCC cost + tunnel/obstacle h).
 
     State (15):  [px, py, pz, vx, vy, vz, roll, pitch, yaw,
                   f_col, f_cmd, r_cmd, p_cmd, y_cmd, theta]
     Input  (5):  [df_cmd, dr_cmd, dp_cmd, dy_cmd, v_theta]
+
+    When n_gates > 0, a soft gate-frame penalty (WedgeWindow) is added to the
+    EXTERNAL cost with weight gate_weight (one block of WEDGE_NP params per gate,
+    appended after the obstacle params).
     """
     mass    = float(parameters["mass"])
     gravity = -float(parameters["gravity_vec"][-1])
@@ -86,7 +104,7 @@ def _build_mpccpp_model(
     inputs = vertcat(df_cmd, dr_cmd, dp_cmd, dy_cmd, v_theta)
 
     # ── Per-node parameters ───────────────────────────────────────────────────
-    npar = num_params(n_obstacles)
+    npar = num_params(n_obstacles, n_gates)
     p = MX.sym("p", npar)
 
     # ── Dynamics (RPY model identical to mpcc_setup.py) ───────────────────────
@@ -136,6 +154,22 @@ def _build_mpccpp_model(
 
     cost_expr = track + smooth + speed
 
+    # ── Soft gate-frame penalty (WedgeWindow), appended to the EXTERNAL cost ──
+    # One block of WEDGE_NP params per gate, located right after the obstacle
+    # params. The penalty is >= 0, zero when the drone is clear of the frame, and
+    # grows as it penetrates any of the four wedge bars. It applies at every node
+    # (stage and terminal), independent of the tunnel: the tunnel is the primary
+    # soft guide, this is the backup that keeps the drone off the physical frame.
+    gate_cost_e = MX(0)
+    if n_gates > 0:
+        gate_start = _OBST_START + OBST_DIM * n_obstacles
+        gate_pen = MX(0)
+        for i in range(n_gates):
+            pg = p[gate_start + WEDGE_NP * i : gate_start + WEDGE_NP * (i + 1)]
+            gate_pen = gate_pen + WedgeWindow.casadi_penalty_sym(pos, pg)
+        cost_expr = cost_expr + gate_weight * gate_pen
+        gate_cost_e = gate_weight * gate_pen
+
     # ── Tunnel constraints: four halfspaces, h >= 0 when inside prism ─────────
     n_tun = p[_NRM]; b_tun = p[_BNM]; W = p[_WIDX]; H = p[_HIDX]
     d_pos = pos - pd   # deviation from reference point (not pd_theta)
@@ -162,7 +196,7 @@ def _build_mpccpp_model(
     model.p = p
     model.f_expl_expr = f_dyn
     model.cost_expr_ext_cost   = cost_expr
-    model.cost_expr_ext_cost_e = MX(0)   # no terminal cost
+    model.cost_expr_ext_cost_e = gate_cost_e   # gate penalty only (no tracking)
     model.con_h_expr   = h
     model.con_h_expr_e = h
     return model
@@ -186,6 +220,8 @@ def create_ocp_solver_mpccpp(
     dp_cmd_rate_max: float | None = None,
     dy_cmd_rate_max: float | None = None,
     rate_limit_default: float = 10.0,
+    n_gates: int = 0,
+    gate_weight: float = 1e3,
     verbose: bool = False,
 ) -> tuple[AcadosOcpSolver, AcadosOcp]:
     """Build the MPCC++ acados solver.
@@ -222,6 +258,11 @@ def create_ocp_solver_mpccpp(
         rate_limit_default: Wide symmetric bound applied to any command-rate input
                             whose *_cmd_rate_max is None (matches the previous
                             hard-coded +/-10, i.e. effectively unconstrained).
+        n_gates:            Number of gate-frame slots baked into the OCP. When > 0,
+                            a soft WedgeWindow penalty for each gate is added to the
+                            EXTERNAL cost (one WEDGE_NP param block per gate). 0 =>
+                            no gate-frame penalty (baseline behaviour).
+        gate_weight:        Weight of the soft gate-frame penalty in the cost.
         verbose:            Pass to AcadosOcpSolver.
 
     Returns:
@@ -237,9 +278,10 @@ def create_ocp_solver_mpccpp(
             "w_speed_gate": 9.0,
         }
 
-    model = _build_mpccpp_model(parameters, n_obstacles, cost_cfg)
+    model = _build_mpccpp_model(parameters, n_obstacles, cost_cfg,
+                                n_gates=n_gates, gate_weight=gate_weight)
     nh    = N_TUNNEL + n_obstacles
-    npar  = num_params(n_obstacles)
+    npar  = num_params(n_obstacles, n_gates)
     nx    = model.x.rows()
 
     ocp = AcadosOcp()
@@ -325,6 +367,12 @@ def create_ocp_solver_mpccpp(
     so.nlp_solver_type       = "SQP_RTI"
     so.qp_solver_iter_max    = 50
     so.levenberg_marquardt   = 1e-2
+    # The WedgeWindow penalty in the EXTERNAL cost can make the exact Hessian
+    # locally indefinite; convexify it (as the NMPC soft setup does) so the QP
+    # stays well-posed. Only enabled when the gate penalty is active, to leave
+    # baseline behaviour untouched.
+    if n_gates > 0:
+        so.regularize_method = "CONVEXIFY"
     so.qp_solver_warm_start  = 1
     so.tf                    = Tf
 
