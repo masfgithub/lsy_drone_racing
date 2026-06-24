@@ -381,7 +381,7 @@ class MPCCpp(ControllerInterface):
         r_roll: float = 0.3,
         r_pitch: float = 0.3,
         r_yaw: float = 0.5,
-        w_speed_gate: float = 5.5,
+        w_speed_gate: float = 4.0,
         W_nom: float = 0.3,
         H_nom: float = 0.3,
         tunnel_sigma: float = 0.4,
@@ -475,7 +475,7 @@ class MPCCpp(ControllerInterface):
 
         self._gates_information = {
             "total_length": 0.8, "total_height": 0.8,
-            "hole_width": 0.23,  "hole_height": 0.23,
+            "hole_width": 0.20,  "hole_height": 0.20,
             "thickness": 0.35,   "margin": 0.05,
         }
         self._obstacles_information = {"d_min": 0.15, "total_height": 2.0}
@@ -521,8 +521,8 @@ class MPCCpp(ControllerInterface):
         self._W_nom = float(W_nom)
         self._H_nom = float(H_nom)
         # Tunnel cross-section target at the gates (half the hole opening).
-        self._gates_information["hole_width"] = 0.1
-        self._gates_information["hole_height"] = 0.1
+        #self._gates_information["hole_width"] = 0.1
+        #self._gates_information["hole_height"] = 0.1
         self._gate_w_half  = self._gates_information["hole_width"] / 2.0
         self._gate_h_half  = self._gates_information["hole_height"] / 2.0
         self._tunnel_sigma = float(tunnel_sigma)
