@@ -15,7 +15,7 @@ from lsy_drone_racing.control.basic_planner import BasicPlanner
 from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.nmpc.nmpc import NMPC
-from lsy_drone_racing.control.Planner.SplinePlanner_2 import SplinePlanner
+from lsy_drone_racing.control.Planner.new_planner import SplinePlanner
 
 if TYPE_CHECKING:
     from crazyflow import Sim
@@ -207,7 +207,7 @@ class DroneRacingPipeline(Controller):
         self._t_replan = 0.0
 
         self._planner = SplinePlanner(env_states, info, config,
-                                      t_total, max_speed=2.0)
+                                      t_total)
 
         planner_dict = self._planner.plan(env_states, 0.0)
         self._controller = NMPC(env_states, planner_dict, info, config, t_total, use_soft=True)

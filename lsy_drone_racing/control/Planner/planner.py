@@ -18,10 +18,10 @@ __all__ = ["Trajectory", "Planner", "DEFAULT_MAX_SPEED"]
 DEFAULT_MAX_SPEED = 12.0  # m/s
 FRAME_WIDTH = 0.72
 FRAME_OPENING = 0.4
-FRAME_THICK = 0.2
+FRAME_THICK = 0.05
 POST_WIDTH = 0.2
 CLEARANCE = 0.1
-
+R_OBSTACLE = 0.15
 
 
 @dataclass
@@ -108,7 +108,7 @@ class Planner(ABC):
         return pGLL_array, y_GBL_array
     
     def _check_gate(
-        self, 
+        self,
         p_ref_LL: np.array, 
         pGLL_array: np.ndarray, 
         y_GBL_array: np.ndarray
@@ -176,6 +176,75 @@ class Planner(ABC):
         local = np.array([lx[g], ly[g], lz[g]])
         yaw = y_GBL_array[g]
         return True, centre, local, yaw, half_outer
+
+    def _check_gate2(
+        self,
+        p_ref_LL: np.array, 
+        pGLL_array: np.ndarray, 
+        y_GBL_array: np.ndarray
+    ) -> tuple[bool, np.ndarray | None, np.ndarray | None, float | None, float | None]:
+        """Checks if a trajectory point is colliding with any gate frame.
+        
+        Args:
+            p_ref_LL:           Trajectory point to check.
+            pGLL_array:         Center positions of all gates.
+            y_GBL_array:        Yaws of all the gates.
+
+        Returns:
+            is_inside_frame:    True if the point is colliding with a gate's solid frame structure.
+            centre:             Centre of the gate that's been violated.
+            local:              Distance from the point to the centre of the violated gate.
+            yaw:                Yaw of the violated gate.
+            half_outer:         Outer distance of the gate frame.
+
+        """
+        # Half-dimensions including clearance margins
+        half_outer = (FRAME_WIDTH / 2)
+        half_open  = FRAME_OPENING / 2
+        half_thick = FRAME_THICK
+        half_post_width = POST_WIDTH/2 + CLEARANCE
+
+        # Difference trajectory point to all gate centers
+        diff = p_ref_LL - pGLL_array
+        
+        # Rotate differences into each individual gate's local frame using its yaw
+        lx =  diff[:, 0] * np.cos(y_GBL_array) + diff[:, 1] * np.sin(y_GBL_array)
+        ly = -diff[:, 0] * np.sin(y_GBL_array) + diff[:, 1] * np.cos(y_GBL_array)
+        lz =  diff[:, 2]
+
+        # Calculate bounding box overlaps for all gates simultaneously
+        in_depth = np.abs(lx) < half_thick
+        in_outer = (np.abs(ly) < half_outer) & (np.abs(lz) < half_outer)
+
+        # Gate Post
+        # point is in the post zone when it sits BELOW the opening (local frame, consistent units)
+        lz_post = lz < -half_open          # not: diff[:,2] < post_height
+        in_post = np.abs(ly) < half_post_width
+        post_collisions = lz_post & in_post & in_depth
+        
+        # Collision happens if it is inside gate frame but not the airhole
+        gate_collisions = in_depth & in_outer
+        
+        is_inside_frame = bool(np.any(gate_collisions))
+        post_collisions = lz_post & in_post & in_depth
+        is_post_collisions = bool(np.any(post_collisions))
+
+        if not is_inside_frame | is_post_collisions:
+            return False, None, None, None, None
+        
+        if is_post_collisions:
+            lz = np.abs(lz*10)
+
+        #print(is_post_collisions, is_inside_frame)
+
+        #if is_inside_frame:
+            #print(in_depth, in_outer, ~in_open)
+        #breakpoint()
+        g = int(np.argmax(gate_collisions))
+        centre = pGLL_array[g]
+        local = np.array([lx[g], ly[g], lz[g]])
+        yaw = y_GBL_array[g]
+        return True, centre, local, yaw, half_outer
     
     def _check_obsticle(
             self,
@@ -193,7 +262,7 @@ class Planner(ABC):
             d_O:                    Distance the point needs to clear the obsticle.
         """
         # Hardcoded physical pillar radius + safety margin (match to your env configuration)
-        r_obstacle = 0.15 + CLEARANCE
+        r_obstacle = R_OBSTACLE
 
         # consider only x and y coordinates because it is a pillar
         p_ref_xy = p_ref_LL[0:2]

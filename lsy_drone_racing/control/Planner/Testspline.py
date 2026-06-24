@@ -20,7 +20,7 @@ import plotly.graph_objects as go
 from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt   # NOTE: don't force a backend here, so plt.show() can open a window
 
-from lsy_drone_racing.control.Planner.SplinePlanner_2 import SplinePlanner
+from lsy_drone_racing.control.Planner.new_planner import SplinePlanner
 from lsy_drone_racing.control.Planner.planner import FRAME_WIDTH, FRAME_OPENING, CLEARANCE
 
 try:
@@ -140,20 +140,24 @@ def build_figure(start, gates, obstacles, traj, traj0, waypoints):
 
 
 def main():
-    start = [2, -1, 1.0]
-    gates = [(np.array([3.0, 0.0, 1.0]), 0.0),
-             (np.array([3.0, 1.0, 2]), np.deg2rad(180)),
-             (np.array([1.0, 1.0, 2]), np.deg2rad(180))]
-    obstacles = [[3.6, 0.5, 1.0], [1.3, 0.8, 1.0]]
+    start = [-1.5, 0.75, 0.01]
+    gates = [(np.array([0.5,  0.25, 0.7]), -0.78),
+            (np.array([1.05, 0.75, 1.2]),  2.35),
+            (np.array([-1.0, -0.25, 0.7]), 3.14),
+            (np.array([0.0, -0.75, 1.2]),  0.0)]
+    obstacles = [[0.0,  0.75, 1.55],
+                [1.0,  0.25, 1.55],
+                [-1.5, -0.25, 1.55],
+                [-0.5, -0.75, 1.55]]
 
     cfg = SimpleNamespace(env=SimpleNamespace(freq=50))
-    planner = SplinePlanner(make_obs(start, gates, obstacles), {}, cfg, t_total=12, max_speed=2.0)
+    planner = SplinePlanner(make_obs(start, gates, obstacles), {}, cfg, t_total=12)
     obs = make_obs(start, gates, obstacles)
     traj = planner.plan(obs, 0.0).positions
     waypoints = get_set_waypoints(planner, obs)
 
     obs0 = make_obs(start, gates, [])
-    traj0 = SplinePlanner(obs0, {}, cfg, t_total=12, max_speed=2.0).plan(obs0, 0.0).positions
+    traj0 = SplinePlanner(obs0, {}, cfg, t_total=12).plan(obs0, 0.0).positions
 
     fig = build_figure(start, gates, obstacles, traj, traj0, waypoints)
     fig.write_html("scene.html", include_plotlyjs="cdn", auto_open=False)

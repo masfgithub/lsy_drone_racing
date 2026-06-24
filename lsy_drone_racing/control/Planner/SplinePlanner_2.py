@@ -27,8 +27,7 @@ class SplinePlanner(Planner):
         obs: EnvState_t,
         info: dict,
         config: dict,
-        t_total: float,
-        max_speed: float = 2.0
+        t_total: float
     ):
         """Initialize SplinePlanner.
         
@@ -41,7 +40,6 @@ class SplinePlanner(Planner):
         """
         super().__init__(obs, info, config)
         self._t_total = t_total
-        self.max_speed = max_speed
 
     def plan(
             self,
