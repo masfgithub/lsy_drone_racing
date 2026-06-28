@@ -12,10 +12,18 @@ import numpy as np
 from crazyflow.sim.visualize import draw_capsule, draw_line, draw_points
 
 from lsy_drone_racing.control.basic_planner import BasicPlanner
+from lsy_drone_racing.control.basic_planner_mpccpp import BasicPlannerMPCCpp
+from lsy_drone_racing.control.SplinePlanner_2 import SplinePlanner
+from lsy_drone_racing.control.gate_spline_planner import GateCenterSplinePlanner
 from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
+from lsy_drone_racing.control.mpcc.mpcc import MPCC
+from lsy_drone_racing.control.mpcc.mpccpp import MPCCpp
 from lsy_drone_racing.control.nmpc.nmpc import NMPC
 from lsy_drone_racing.control.Planner.new_planner import SplinePlanner
+
+# Active controller: "mpccpp" | "mpcc" | "nmpc"
+CONTROLLER_TYPE = "mpccpp"
 
 if TYPE_CHECKING:
     from crazyflow import Sim
@@ -131,6 +139,66 @@ def _draw_wedge_gate(
     # Bottom: base at -hh, tip at -hho
     draw_prism(-hh, -hho, depth_idx=2, ax_idx=0, perp_idx=1, h_perp_base=hl, h_perp_tip=hw)
 
+def _draw_mpccpp_tunnel(
+    sim: Sim,
+    controller,
+    ring_rgba: NDArray | None = None,
+    corner_rgba: NDArray | None = None,
+):
+    """Draw the MPCC++ prediction tunnel: the rectangular cross-section at every
+    predicted horizon node (4 corners + 4 edges) plus the longitudinal rails.
+
+    Cross-section at progress theta: centre ref.eval(theta), spanned by the
+    tunnel frame (n, b) = ref.frame(theta) with half-extents (W, H) =
+    ref.width(theta) -- exactly the prism enforced by the tunnel constraint.
+    """
+    if sim.viewer is None:
+        return
+    ref = getattr(controller, "_ref", None)
+    if ref is None:
+        return
+
+    # per-node progress: solved theta state (index 14), aligned with the
+    # predicted trajectory; fall back to the controller's theta_pred guess.
+    if getattr(controller, "_x_warm", None):
+        thetas = [float(x[14]) for x in controller._x_warm]
+    elif getattr(controller, "_theta_pred", None) is not None:
+        thetas = [float(t) for t in controller._theta_pred]
+    else:
+        return
+
+    if ring_rgba is None:
+        ring_rgba = np.array([0.1, 0.85, 0.95, 0.6])      # cyan edges
+    if corner_rgba is None:
+        corner_rgba = np.array([1.0, 0.9, 0.0, 0.9])      # yellow corners
+
+    # corners[k] = 4x3, order (+n+b, -n+b, -n-b, +n-b)
+    corners = []
+    for th in thetas:
+        pd = np.asarray(ref.eval(th), dtype=float)
+        n, b = ref.frame(th)
+        W, H = ref.width(th)
+        n = np.asarray(n, float); b = np.asarray(b, float)
+        corners.append(np.array([
+            pd + W * n + H * b,
+            pd - W * n + H * b,
+            pd - W * n - H * b,
+            pd + W * n - H * b,
+        ]))
+    corners = np.array(corners)                 # (K, 4, 3)
+
+    # cross-section rectangle (4 edges) at every prediction node
+    for k in range(len(corners)):
+        ring = np.vstack([corners[k], corners[k, 0]])     # closed (5,3)
+        draw_line(sim, ring, rgba=ring_rgba)
+
+    # longitudinal rails connecting node k -> k+1 along each corner
+    for cidx in range(4):
+        draw_line(sim, corners[:, cidx, :], rgba=ring_rgba)
+
+    # corner markers
+    #draw_points(sim, corners.reshape(-1, 3), rgba=corner_rgba, size=0.02)
+
 
 def _draw_cylinder_obstacle(
     sim: Sim, position: NDArray, height: float, radius: float, rgba: NDArray | None = None
@@ -187,8 +255,148 @@ def _draw_post(
     )
 
 
+def _draw_tunnel_centerline(sim: Sim, ref, n: int = 150, rgba: NDArray | None = None):
+    """Draw the MPCC++ tunnel centerline as a sequence of line segments."""
+    if sim.viewer is None:
+        return
+    if rgba is None:
+        rgba = np.array([1.0, 0.8, 0.0, 0.8])
+    s_vals = np.linspace(0.0, ref.length, n)
+    pts = np.array([ref.eval(float(s)) for s in s_vals])
+    draw_line(sim, pts, rgba=rgba)
+
+
+def plot_tube_width_profile(
+    ref,
+    save_path: str = "tube_width_profile.png",
+    n: int = 1500,
+    floor: float = 0.05,
+    show_activation_panel: bool = True,
+) -> str | None:
+    """Dump a PNG of the MPCC++ tunnel cross-section size along the path.
+
+    Use this to debug tube shrink/expand: it shows the W(theta)/H(theta) the
+    solver actually sees, plus a diagnostic of the per-gate Gaussian bumps.
+
+    Top panel:    W(theta), H(theta) straight from ref.width(theta), with the
+                  nominal size, the per-gate target (ref.gate_hw/hh) and the
+                  width() floor drawn for reference, and a vertical marker at
+                  every gate arc-length.
+    Bottom panel: the per-gate Gaussian activations exp(-1/2 (d/sigma)^2), shown
+                  as BOTH their sum (what the current width() subtracts) and
+                  their max (nearest-gate). sum >> max, or sum > 1, means the
+                  gate bumps overlap and the tube is being over-pinched.
+
+    Args:
+        ref:                   MPCC++ TunnelReferencePath (e.g. controller._ref).
+        save_path:             Output PNG path (relative paths land in CWD).
+        n:                     Number of theta samples.
+        floor:                 The clamp value used inside width() (drawn for ref).
+        show_activation_panel: Add the Gaussian-activation diagnostic subplot.
+
+    Returns:
+        The saved path, or None if plotting was not possible.
+    """
+    if ref is None:
+        return None
+    try:
+        import sys
+
+        import matplotlib
+
+        if "matplotlib.pyplot" not in sys.modules:
+            matplotlib.use("Agg")  # headless: crazyflow viewer is not matplotlib
+        import matplotlib.pyplot as plt
+    except Exception as exc:  # noqa: BLE001
+        print(f"[tube-profile] matplotlib unavailable: {exc}")
+        return None
+
+    L = float(ref.length)
+    thetas = np.linspace(0.0, L, n)
+    WH = np.array([ref.width(float(t)) for t in thetas])
+    W, H = WH[:, 0], WH[:, 1]
+
+    gate_s = np.atleast_1d(np.asarray(getattr(ref, "gate_s", []), dtype=float))
+    W_nom = float(getattr(ref, "W_nom", np.nan))
+    gate_hw = np.atleast_1d(np.asarray(getattr(ref, "gate_hw", []), dtype=float))
+    sigma = float(getattr(ref, "tunnel_sigma", np.nan))
+    closed = bool(getattr(ref, "closed", False))
+
+    two = show_activation_panel and gate_s.size > 0 and np.isfinite(sigma)
+    npan = 2 if two else 1
+    fig, axs = plt.subplots(npan, 1, figsize=(11, 3.7 * npan), squeeze=False)
+
+    # ---- top panel: the cross-section the solver sees ----------------------
+    ax = axs[0, 0]
+    top = max(W.max(), H.max(), W_nom if np.isfinite(W_nom) else 0.0) * 1.18 + 1e-3
+    ax.set_ylim(0, top)
+    ax.plot(thetas, W, color="tab:blue", lw=2.0, label=r"$W(\theta)$ half-width")
+    if not np.allclose(H, W):
+        ax.plot(thetas, H, color="tab:purple", lw=1.8, label=r"$H(\theta)$ half-height")
+    if np.isfinite(W_nom):
+        ax.axhline(W_nom, color="0.45", ls="--", lw=1.1)
+        ax.text(L * 0.01, W_nom, f" W_nom={W_nom:.3g}", color="0.35",
+                fontsize=9, va="bottom", ha="left")
+    if gate_hw.size:
+        gt = float(np.min(gate_hw))
+        ax.axhline(gt, color="tab:red", ls=":", lw=1.3)
+        ax.text(L * 0.01, gt, f" gate target={gt:.3g}", color="tab:red",
+                fontsize=9, va="bottom", ha="left")
+    ax.axhline(floor, color="k", ls="-.", lw=0.8)
+    ax.text(L * 0.55, floor, f" width() floor={floor:.3g}", color="k",
+            fontsize=8, va="bottom", ha="left")
+    for k, gs in enumerate(gate_s):
+        ax.axvline(gs, color="tab:red", lw=1.0, alpha=0.5)
+        ax.text(gs, top * 0.04, f"G{k + 1}", color="tab:red", ha="center", fontsize=8)
+    ax.set_xlim(0, L)
+    ax.set_xlabel(r"progress $\theta$ [m]")
+    ax.set_ylabel("tunnel half-size [m]")
+    ax.set_title(
+        f"MPCC++ tube cross-section vs progress   "
+        f"(sigma={sigma:.3g} m, L={L:.2f} m, {gate_s.size} gates)",
+        fontsize=10,
+    )
+    ax.grid(alpha=0.25)
+    ax.legend(loc="upper right", fontsize=9)
+
+    # ---- bottom panel: Gaussian activation diagnostic ----------------------
+    if two:
+        ax2 = axs[1, 0]
+        d = thetas[:, None] - gate_s[None, :]
+        if closed:
+            d = (d + L / 2.0) % L - L / 2.0
+        g = np.exp(-0.5 * (d / sigma) ** 2)  # (n, M)
+        g_sum, g_max = g.sum(axis=1), g.max(axis=1)
+        ax2.plot(thetas, g_sum, color="tab:red", lw=2.0,
+                 label=r"$\sum_j g_j$  (current width() subtracts this)")
+        ax2.plot(thetas, g_max, color="tab:green", lw=2.0,
+                 label=r"$\max_j g_j$  (nearest-gate)")
+        ax2.axhline(1.0, color="0.4", ls="--", lw=1.0)
+        ax2.text(L * 0.01, 1.0, " over-pinch threshold = 1", color="0.35",
+                 fontsize=9, va="bottom")
+        for gs in gate_s:
+            ax2.axvline(gs, color="tab:red", lw=1.0, alpha=0.5)
+        ax2.set_xlim(0, L)
+        ax2.set_ylim(0, max(1.1, float(g_sum.max()) * 1.1))
+        ax2.set_xlabel(r"progress $\theta$ [m]")
+        ax2.set_ylabel("Gaussian activation")
+        ax2.set_title(
+            "Per-gate bump activation: sum >> max (or sum > 1) "
+            "means bumps overlap and the tube is over-pinched",
+            fontsize=10,
+        )
+        ax2.grid(alpha=0.25)
+        ax2.legend(loc="upper right", fontsize=9)
+
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print(f"[tube-profile] saved {save_path}")
+    return save_path
+
+
 class DroneRacingPipeline(Controller):
-    """This class handles the pipeline for the drone racing. It includes planning and control."""
+    """Pipeline for drone racing: planner + controller, supporting MPCC++/MPCC/NMPC."""
 
     def __init__(self, obs: dict[str, NDArray[np.floating]], info: dict, config: dict):
         """Initialize the pipeline."""
@@ -199,48 +407,96 @@ class DroneRacingPipeline(Controller):
         self.nominal_gates_position = env_states.pTLL_array
         self.nominal_obstacles_position = env_states.pOLL_array
         self._tick = 0
-        self._tick_offset = 0
         self._freq = config.env.freq
         self._finished = False
-        self._config = config
-        #self._planner = BasicPlanner(config, t_total)
-        self._t_replan = 0.0
+        self._force_replan = False
 
-        self._planner = SplinePlanner(env_states, info, config,
-                                      t_total)
+        if CONTROLLER_TYPE == "mpccpp":
+            # Online adaptive planner: re-roots its trajectory at the current
+            # drone position and is replanned when a gate/obstacle moves. MPCC++
+            # consumes only the path geometry (its own v_theta sets the speed).
+            # The planner is time-parameterized and crashes if t_elapsed >= its
+            # horizon (t_remaining <= 0), so keep that horizon comfortably above
+            # the real flight time. Since MPCC++ ignores the timing, a large
+            # value only makes the sampled path denser -- the geometry is identical.
+            t_plan = 12.0
+            # GateCenterSplinePlanner: re-roots at the current drone position,
+            # leaves it along the current motion (velocity on a replan, thrust at
+            # the start), threads each gate centre on its normal, routes around
+            # obstacles (perpendicular left/right push, fewest-violation pick), and
+            # keeps the line clear of the gate frames -- re-threading the hole when
+            # the racing line loops back past a gate it already passed. MPCC++ uses
+            # only the path geometry (its v_theta sets the speed), so this line
+            # becomes the tunnel centerline directly.
+            self._planner = GateCenterSplinePlanner(
+                env_states, info, config, t_plan, max_speed=2.0
+            )
+            trajectory = self._planner.plan(env_states, 0.0)
+            # plan() itself pops up / refreshes the diagnostic figure after every
+            # plan (init and each replan) when SHOW_PLAN_PLOT is on -- nothing to do
+            # here. Toggle that flag in gate_spline_planner.py to enable/disable.
+            self._controller = MPCCpp(env_states, trajectory, info, config, t_plan)
+            # Replan trigger bookkeeping.
+            self.nominal_gates_position = env_states.pTLL_array
+            self.nominal_obstacles_position = env_states.pOLL_array
+            self._t_replan = 0.0
 
-        planner_dict = self._planner.plan(env_states, 0.0)
-        self._controller = NMPC(env_states, planner_dict, info, config, t_total, use_soft=True)
-        self._setpoint = env_states.pBLL.copy()
+        elif CONTROLLER_TYPE == "mpcc":
+            self._planner = BasicPlanner(config, t_total)
+            planner_dict = self._planner.plan()
+            self._controller = MPCC(env_states, planner_dict, info, config, t_total)
+
+        elif CONTROLLER_TYPE == "nmpc":
+            self._planner = BasicPlanner(config, t_total)
+            planner_dict = self._planner.plan()
+            self._controller = NMPC(
+                env_states, planner_dict, info, config, t_total, use_soft=True
+            )
+
+        else:
+            raise ValueError(
+                f"Unknown CONTROLLER_TYPE '{CONTROLLER_TYPE}'. "
+                "Choose 'mpccpp', 'mpcc', or 'nmpc'."
+            )
+
+        # Debug: dump the MPCC++ tube cross-section profile to a PNG on startup.
+        #if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):
+        #    try:
+        #        plot_tube_width_profile(self._controller._ref, "tube_width_profile.png")
+        #    except Exception as exc:  # noqa: BLE001 -- never let debug plotting break a run
+        #        print(f"[pipeline] tube profile plot failed: {exc}")
 
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
     ) -> NDArray[np.floating]:
         """Compute the next desired collective thrust and roll/pitch/yaw of the drone."""
         env_states = extract_env_states(obs)
-        #self._planner.replan()
-        t = self._tick / self._freq - self._t_replan
-        self._setpoint = self._planner.setpoint_at(t).copy()
-        if self.get_replan_reason(env_states.pTLL_array[env_states.pTLL_index],
-                                  env_states.pTLL_index,
-                                  env_states.pOLL_array) == True:
-            self.nominal_gates_position = env_states.pTLL_array
-            self.nominal_obstacles_position = env_states.pOLL_array
-            planner_dict = self._planner.plan(env_states, self._tick / self._freq)
-            self._t_replan = self._tick / self._freq
-            self._controller.set_ref_traj(planner_dict)
-            print('Replanned')
-            self._tick_offset = self._tick
-            return self._controller.control(env_states, info, self._tick_offset)
-        return self._controller.control(env_states, info, self._tick_offset)
+        if CONTROLLER_TYPE == "mpccpp":
+            # Replan when a gate/obstacle has moved (or after an episode reset).
+            # The planner re-roots at the current drone position; the controller
+            # then rebuilds its tube and resets theta to 0 (drone = new start).
+            if self._force_replan or self._get_replan_reason(env_states):
+                self.nominal_gates_position = env_states.pTLL_array
+                self.nominal_obstacles_position = env_states.pOLL_array
+                trajectory = self._planner.plan(env_states, self._tick / self._freq)
+                self._t_replan = self._tick / self._freq
+                self._controller.replan_reference(trajectory, env_states)
+                self._force_replan = False
+                print("[MPCC++] Replanned -> tube + theta reset")
+            return self._controller.control(env_states, info)
 
-    def get_replan_reason(self, pTLL, pTLL_index, pOLL_array):
-        
-        if np.linalg.norm(self.nominal_gates_position[pTLL_index] - pTLL) > 0.01:
+        # MPCC / NMPC: original flow.
+        self._planner.replan()
+        return self._controller.control(env_states, info)
+
+    def _get_replan_reason(self, env_states) -> bool:
+        """True if the active gate or any obstacle moved more than 1 cm."""
+        idx = int(getattr(env_states, "pTLL_index", 0))
+        if np.linalg.norm(self.nominal_gates_position[idx] - env_states.pTLL_array[idx]) > 0.01:
             return True
-        
-        for i in range(4):
-            if np.linalg.norm(self.nominal_obstacles_position[i] - pOLL_array[i]) > 0.01:
+        n = min(len(self.nominal_obstacles_position), len(env_states.pOLL_array))
+        for i in range(n):
+            if np.linalg.norm(self.nominal_obstacles_position[i] - env_states.pOLL_array[i]) > 0.01:
                 return True
         return False
 
@@ -261,26 +517,46 @@ class DroneRacingPipeline(Controller):
     def episode_callback(self):
         """Reset the integral error."""
         self._tick = 0
+        self._controller.reset()
         self._controller.set_tick(self._tick)
+        # Force a fresh replan (re-root + tube rebuild) on the next control step.
+        self._force_replan = True
+        self._t_replan = 0.0
+
+    def dump_tube_profile(self, save_path: str = "tube_width_profile.png") -> str | None:
+        """Regenerate the MPCC++ tube cross-section profile PNG on demand.
+
+        Call this any time after construction (e.g. from a debugger or
+        episode_callback) to inspect the current tube shrink/expand behaviour.
+        Returns the saved path, or None if it could not be produced.
+        """
+        ref = getattr(self._controller, "_ref", None)
+        return plot_tube_width_profile(ref, save_path)
 
     def render_callback(self, sim: Sim):
-        """Visualize the desired trajectory, setpoint, gates and obstacles."""
+        """Visualize the planned path, MPC predictions, gates, and obstacles."""
+        # Planned path (green)
         trajectory = self._planner.get_pos_traj()
         draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
-        pred_trajectory = self._controller.get_predicted_traj()
-        i = int(self._tick - self._t_replan * self._freq)
-        ref_trajectory = self._controller.get_ref_traj(i)
-        # draw_line(sim, trajectory, rgba=np.array([0.58, 0.0, 0.83, 1.0]))
 
+        # Tunnel centerline for MPCC++ (yellow)
+        #if CONTROLLER_TYPE == "mpccpp":
+        #    _draw_tunnel_centerline(sim, self._controller._ref)
+
+        # MPC predicted trajectory (purple dots)
+        pred_trajectory = self._controller.get_predicted_traj()
         for p in pred_trajectory:
             draw_points(sim, p.reshape(1, -1), rgba=(0.58, 0.0, 0.83, 0.5), size=0.01)
 
-        for p in ref_trajectory:
-            draw_points(sim, p.reshape(1, -1), rgba=(1.0, 0.0, 0.0, 0.5), size=0.01)
+        # MPCC++ prediction tunnel (cyan edges + yellow corners)
+        #if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):
+        #    _draw_mpccpp_tunnel(sim, self._controller)
+        # Reference trajectory (red dots)
+        #ref_trajectory = self._controller.get_ref_traj()
+        #for p in ref_trajectory:
+        #    draw_points(sim, p.reshape(1, -1), rgba=(1.0, 0.0, 0.0, 0.5), size=0.01)
 
-        draw_points(sim, self._setpoint.reshape(1, -1),
-                    rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
-
+        # Gates
         for gate in self._controller._gates:
             _draw_wedge_gate(
                 sim,
@@ -294,19 +570,12 @@ class DroneRacingPipeline(Controller):
                 rgba=np.array([0.0, 0.5, 1.0, 1.0]),
             )
 
-            _draw_post(
-                sim,
-                gate_position=gate.position,
-                r_post=POST_RADIUS,
-                hole_height=gate.hole_height,
-                margin=getattr(gate, "margin", 0.05),
-            )
-
-        for obs in self._controller._obstacles:
-            _draw_cylinder_obstacle(
-                sim,
-                position=obs.position,
-                height=obs.total_height,
-                radius=obs.d_min,
-                rgba=np.array([1.0, 0.2, 0.2, 0.7]),
-            )
+        # Obstacles
+        #for obs in self._controller._obstacles:
+        #    _draw_cylinder_obstacle(
+        #        sim,
+        #        position=obs.position,
+        #        height=obs.total_height,
+        #        radius=obs.d_min,
+        #        rgba=np.array([1.0, 0.2, 0.2, 0.7]),
+        #    )
