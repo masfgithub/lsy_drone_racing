@@ -13,6 +13,7 @@ from crazyflow.sim.visualize import draw_capsule, draw_line, draw_points
 from lsy_drone_racing.control.basic_planner import BasicPlanner
 from lsy_drone_racing.control.basic_planner_mpccpp import BasicPlannerMPCCpp
 from lsy_drone_racing.control.SplinePlanner_2 import SplinePlanner
+from lsy_drone_racing.control.gate_spline_planner import GateCenterSplinePlanner
 from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.mpcc.mpcc import MPCC
@@ -383,8 +384,21 @@ class DroneRacingPipeline(Controller):
             # the real flight time. Since MPCC++ ignores the timing, a large
             # value only makes the sampled path denser -- the geometry is identical.
             t_plan = 12.0
-            self._planner = SplinePlanner(env_states, info, config, t_plan, max_speed=2.0)
+            # GateCenterSplinePlanner: re-roots at the current drone position,
+            # leaves it along the current motion (velocity on a replan, thrust at
+            # the start), threads each gate centre on its normal, routes around
+            # obstacles (perpendicular left/right push, fewest-violation pick), and
+            # keeps the line clear of the gate frames -- re-threading the hole when
+            # the racing line loops back past a gate it already passed. MPCC++ uses
+            # only the path geometry (its v_theta sets the speed), so this line
+            # becomes the tunnel centerline directly.
+            self._planner = GateCenterSplinePlanner(
+                env_states, info, config, t_plan, max_speed=2.0
+            )
             trajectory = self._planner.plan(env_states, 0.0)
+            # plan() itself pops up / refreshes the diagnostic figure after every
+            # plan (init and each replan) when SHOW_PLAN_PLOT is on -- nothing to do
+            # here. Toggle that flag in gate_spline_planner.py to enable/disable.
             self._controller = MPCCpp(env_states, trajectory, info, config, t_plan)
             # Replan trigger bookkeeping.
             self.nominal_gates_position = env_states.pTLL_array

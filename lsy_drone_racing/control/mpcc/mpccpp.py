@@ -371,7 +371,7 @@ class MPCCpp(ControllerInterface):
         t_total: int,
         N_horizon: int = 40,
         T_horizon: float = 0.7,
-        mu: float = 12.0,
+        mu: float = 8.0,
         q_lag: float = 80.0,
         q_lag_peak: float = 50.0,
         q_contour: float = 120.0,
@@ -381,7 +381,7 @@ class MPCCpp(ControllerInterface):
         r_roll: float = 0.3,
         r_pitch: float = 0.3,
         r_yaw: float = 0.5,
-        w_speed_gate: float = 3.0,
+        w_speed_gate: float = 5.0,
         W_nom: float = 0.3,
         H_nom: float = 0.3,
         tunnel_sigma: float = 0.4,
@@ -474,8 +474,8 @@ class MPCCpp(ControllerInterface):
         self._tick = 0
 
         self._gates_information = {
-            "total_length": 0.8, "total_height": 0.8,
-            "hole_width": 0.20,  "hole_height": 0.20,
+            "total_length": 0.9, "total_height": 0.9,
+            "hole_width": 0.18,  "hole_height": 0.18,
             "thickness": 0.35,   "margin": 0.05,
         }
         self._obstacles_information = {"d_min": 0.15, "total_height": 2.0}
