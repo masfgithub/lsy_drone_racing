@@ -18,10 +18,12 @@ __all__ = ["Trajectory", "Planner", "DEFAULT_MAX_SPEED"]
 DEFAULT_MAX_SPEED = 12.0  # m/s
 FRAME_WIDTH = 0.72
 FRAME_OPENING = 0.4
-FRAME_THICK = 0.05
+FRAME_THICK = 0.5
 POST_WIDTH = 0.2
 CLEARANCE = 0.1
-R_OBSTACLE = 0.15
+R_OBSTACLE = 0.2
+DRONE_RADIUS = 0.05
+
 
 
 @dataclass
@@ -302,3 +304,172 @@ class Planner(ABC):
         tq = min(t + lookahead_t, ts[-1])
         return np.array([np.interp(tq, ts, self.trajectory.positions[:, k])
                          for k in range(3)])
+
+    def _check_obsticle2(
+            self,
+            p_ref_LL: np.array,
+            pOLL_array: np.ndarray
+    ) -> tuple[bool, np.array]:
+        """Checks if a trajectory point is inside an obsticle.
+        
+        Args:
+            p_ref_LL:       Trajectory point to be checked.
+            obs:            Environment state observation.
+
+        Returns:
+            is_inside_obsticle:     Boolian value if point is inside true if its outside
+            obsticle:               Centre point of obsticle that is violated.
+        """
+        if len(pOLL_array) == 0:
+           return False, None
+        r_obsticle = R_OBSTACLE
+
+        distance = np.linalg.norm(p_ref_LL[0:2] - pOLL_array[:, 0:2], axis=1)
+        is_inside_obsticle = np.any(distance < r_obsticle)
+        obsticle = pOLL_array[np.argmin(distance)]
+
+        return is_inside_obsticle, obsticle
+    
+    def _get_obsticle_push(
+            self,
+            p_ref_LL: np.array,
+            obsticle: np.array,
+            push_vector: np.array
+    ) -> float:
+        """Get the push vector to avoid the obsticle.
+        
+        Args:
+            p_ref_LL:       Trajectory point from which to push away from the obsticle.
+            obsticle:       Centre point of obsticle that is violated.
+            push_vector:    Push vector to avoid the obsticle.
+
+        Returns:
+            push:           Length of push vector to avoid the obsticle.
+        """
+        r_obsticle = R_OBSTACLE
+        push_steps = 0.01
+        i = 0
+        p_ref_LL = p_ref_LL.copy()
+        while np.linalg.norm(p_ref_LL[:2] - obsticle[:2]) < r_obsticle:
+            p_ref_LL[0:2] += push_steps * push_vector[0:2]
+            i += 1
+        distance = p_ref_LL[0:2] - obsticle[0:2]
+        #breakpoint()
+        push = i * push_steps
+        return push
+    
+    def _check_gate3(
+            self,
+            p_ref_LL: np.array,
+            pGLL_array: np.ndarray,
+            y_GBL_array: np.ndarray
+    ) -> tuple[bool, np.array, float]:
+        """Checks if a trajectory point is colliding with any gate frame.
+        
+        Args:
+            p_ref_LL:           Trajectory point to check.
+            pGLL_array:         Center positions of all gates.
+            y_GBL_array:        Yaws of all the gates.
+            
+        Returns:
+            is_inside_frame:    True if the point is colliding with a gate's solid frame
+                                structure.
+            centre:             Centre of the gate that's been violated.
+            yaw:                Yaw of the violated gate.
+        """
+        # Transform ref point into each gate's local frame
+        diff = p_ref_LL - pGLL_array
+        x = diff[:, 0] * np.cos(y_GBL_array) + diff[:, 1] * np.sin(y_GBL_array)
+        y = -diff[:, 0] * np.sin(y_GBL_array) + diff[:, 1] * np.cos(y_GBL_array)
+        z = diff[:, 2]
+
+        z0 = FRAME_OPENING / 2 - DRONE_RADIUS
+        y0 = FRAME_OPENING / 2 - DRONE_RADIUS
+
+        z1 = FRAME_WIDTH / 2 + DRONE_RADIUS
+        y1 = FRAME_WIDTH / 2 + DRONE_RADIUS
+
+        xmax = FRAME_THICK / 2
+        m = xmax/(z1 - z0)
+
+        check_z_x_axis = (abs(z) > z0) & (abs(z) < z1) & (abs(x) < m * (abs(z) - z0)) & (abs(y) < y1)
+        check_y_x_axis = (abs(y) > y0) & (abs(y) < y1) & (abs(x) < m * (abs(y) - y0)) & (abs(z) < z1)
+
+        is_inside_frame = np.any(check_z_x_axis | check_y_x_axis)
+
+        if not is_inside_frame:
+            return False, None, None
+        
+        g = int(np.argmax(check_z_x_axis | check_y_x_axis))
+        centre = pGLL_array[g]
+        yaw = y_GBL_array[g]
+        return True, centre, yaw
+
+    def _get_gate_push(
+            self,
+            p_ref_LL: np.array,
+            centre: np.array,
+            yaw: float,
+            push_vector: np.array
+    ) -> np.array:
+        """Get the push length to avoid the gate frame.
+        
+        Args:
+            p_ref_LL:       Trajectory point from which to push away from the gate frame.
+            centre:         Centre of the gate that's been violated.
+            yaw:            Yaw of the violated gate.
+            push_vector:    Push vector to avoid the gate frame.
+
+        Returns:
+            p_ref_LL:       New trajectory point after pushing away from the gate frame.
+        """
+        inside_gate = True
+        push_steps = 0.01
+        i = 0
+        p_ref_LL = p_ref_LL.copy()
+
+        while inside_gate:
+            p_ref_LL += push_steps * push_vector
+            inside_gate, _, _ = self._check_gate3(p_ref_LL, np.array([centre]), np.array([yaw]))
+            i += 1
+        #breakpoint()
+        push = i * push_steps
+        return push
+    
+    def _get_gate_push_vector(
+            self,
+            centre: np.array,
+            yaw: float,
+            p_in: np.array,
+            p_out: np.array,
+            p_mid: np.array
+    ) -> np.array:
+        """Find the vector to push away from the gate frame.
+        
+        Args:
+            centre:                 centre of the hit gate.
+            yaw:                    yaw of the hit gate.
+            p_in:                   entering point of the hit gate.
+            p_out:                  Exiting point of the hit gate.
+            
+        Returns:
+            push_vector:            Vector that pushes away from the gate.
+        """
+        chord = p_out - p_in
+        chord_norm = np.linalg.norm(chord)
+        
+        chord_unit = chord / chord_norm
+
+        # Vector from centre to mid (the "away from centre" direction)
+        away = p_mid - centre
+
+        # Component of `away` along the chord direction
+        proj_on_chord = np.dot(away, chord_unit) * chord_unit
+
+        # The perpendicular component (vector rejection)
+        perp = away - proj_on_chord
+
+        # Normalize
+        perp_norm = np.linalg.norm(perp)
+
+        return perp / perp_norm

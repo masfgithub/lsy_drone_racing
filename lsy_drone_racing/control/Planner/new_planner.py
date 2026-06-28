@@ -148,16 +148,98 @@ class SplinePlanner(Planner):
 
         #p_WLL_array = self._obst_near_gate(p_WLL_array, pOLL_array, pGLL_array, y_GBL_array, t_elapsed)
         #print('obst_near_gate done', p_WLL_array)
-        p_WLL_array = self._U_turn(p_WLL_array, pOLL_array, pGLL_array, y_GBL_array, t_elapsed, obs)
+        #p_WLL_array = self._U_turn(p_WLL_array, pOLL_array, pGLL_array, y_GBL_array, t_elapsed, obs)
         #print('U_turn done', p_WLL_array)
-        p_WLL_array = self._180_degree_turn(p_WLL_array, 
-                                            pOLL_array, pGLL_array, y_GBL_array, t_elapsed, obs)
+        #p_WLL_array = self._180_degree_turn(p_WLL_array, 
+        #                                    pOLL_array, pGLL_array, y_GBL_array, t_elapsed, obs)
         #print('180_degree_turn done', p_WLL_array)
-        p_WLL_array = self._avoid_obstacles(p_WLL_array, pOLL_array, t_elapsed)
+        #p_WLL_array = self._avoid_obstacles(p_WLL_array, pOLL_array, t_elapsed)
+        p_WLL_array = self._avoid_anything(p_WLL_array, obs, t_elapsed)
         #print('avoid_obstacles done', p_WLL_array)
         #p_WLL_array = self._detour_gates1(obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed)
 
         return p_WLL_array
+    
+    def _avoid_anything(
+            self,
+            p_WLL_array: np.ndarray,
+            obs: EnvState_t,
+            t_elapsed: float
+    ) -> np.ndarray:
+        """Avoids obsticles or gate frames by setting waypoints around them.
+        
+        Args:
+            p_WLL_array:        Waypoints to be passed through.
+            obs:                Observed environment states.
+            t_elapsed:          Time passed during race.
+
+        Returns:
+            p_WLL_array:        Waypoints to be passed through, avoiding obsticles.
+            """
+        pOLL_array = obs.pOLL_array
+        
+        wps = p_WLL_array.copy()
+        for _ in range(_MAX_AVOID_ITER):
+            # Make a dense Spline
+            #spline_test_array, t_sample = self._create_spline(wps, t_elapsed)
+            #t_dense = np.linspace(0, t_sample[-1], len(t_sample) * 4)
+            #pts = spline_test_array(t_dense)
+
+            spline, t_sample = self._create_spline(wps, t_elapsed)
+            t_dense = np.linspace(0, t_sample[-1], len(t_sample) * 4) # change later
+            pts = spline(t_dense)
+            seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+            cum = np.concatenate([[0.0], np.cumsum(seg)])
+            t_gates  = spline.x
+            kept_wps = spline(t_gates)
+            s_wp     = np.interp(t_gates, t_dense, cum)
+
+            # Init helping variables
+            detours = []
+            inside = False
+            entry_i = None
+            entry_c = None
+            entry_push = None
+
+            # Check each point from dense Spline for collision with obsticle
+            for i, p in enumerate(pts):
+                hit_obst, c_xy_obst, push_obst = self._check_obsticle(p, pOLL_array)
+
+                if hit_obst:
+                    if not inside:
+                        inside = True
+                        entry_i = i
+                        entry_c = c_xy_obst
+                        entry_push = push_obst
+                        
+                    continue
+
+                if inside:
+                    inside = False
+                    p_in, p_out = pts[entry_i], p
+                    
+                    # 2D radial push around obsticle
+                    bis = (p_in[:2] - entry_c) + (p_out[:2] - entry_c)
+                    nb = np.linalg.norm(bis)
+                    if nb < 1e-6:
+                        tv = p_out[:2] - p_in[:2]
+                        bis = np.array([-tv[1], tv[0]])
+                        nb = np.linalg.norm(bis) + 1e-9
+                    new_xy = entry_c + 1.2*entry_push * bis / nb
+                    #print('this works', entry_push)
+                    new_wp = np.array([new_xy[0], new_xy[1], 0.5 * (p_in[2] + p_out[2])])
+                    detours.append((0.5 * (cum[entry_i] + cum[i]), new_wp))
+
+            if not detours:
+                    return wps
+                
+            items = [(s_wp[k], kept_wps[k]) for k in range(len(t_gates))] + detours
+            items.sort(key=lambda it: it[0])
+            wps = np.array([pt for _, pt in items])
+
+
+        return wps
+        
     
     def _avoid_obstacles(self,
                         p_WLL_array: np.ndarray,
@@ -626,6 +708,9 @@ class SplinePlanner(Planner):
             # Because y_axis and z_axis have 0 component in the gate's x (through) direction,
             # adding them directly to gate_pos locks the waypoint in the plane.
             detour_wp = gate_pos + detour_offset
+            Push_dist = 0.3
+            push_dir = [Push_dist * (np.cos(yaw)), Push_dist * (np.sin(yaw)), 0.0]
+            extra_detour = gate_pos + 0.5 * detour_offset + push_dir
 
             # Insert between post-gate-i and pre-gate-(i+1)
             post_gate_i = gate_pos + D * x_axis
@@ -633,7 +718,8 @@ class SplinePlanner(Planner):
             if idx_post < 0:
                 continue
             
-            p_WLL_array = np.insert(p_WLL_array, idx_post + 1, detour_wp, axis=0)
+            p_WLL_array = np.insert(p_WLL_array, idx_post + 1, extra_detour, axis=0)
+            p_WLL_array = np.insert(p_WLL_array, idx_post + 2, detour_wp, axis=0)
 
         return p_WLL_array
 
