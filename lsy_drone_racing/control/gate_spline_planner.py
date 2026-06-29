@@ -634,18 +634,20 @@ class GateCenterSplinePlanner(Planner):
 
         All three sit at radius R = outer_half + FRAME_WRAP_CLEARANCE and share the
         same entry / middle / exit structure (D = FRAME_WRAP_SPACING along the normal
-        for entry/exit). Each is re-splined and scored, and one is chosen by:
-          1) FEASIBILITY     -- clears THIS gate's frame and hits no obstacle;
-          2) REPLAN STABILITY -- if a side (left/right) was used last time for this
-             gate, migrate to TOP when TOP is feasible (so the wrap does not
-             flip-flop left<->right); if TOP was used last (or there is no previous),
-             fall through to (3);
-          3) QUICKER / SMOOTHER -- shortest path, then least curvature.
-        If none is feasible, the least-bad placement is kept and the greedy loop
-        re-splines and tries again. Previous sides are remembered per gate (keyed by
-        rounded centre) in ``self._prev_wrap_side`` and committed by plan(). Threaded
-        AND passed gates are handled. Greedy: fix the worst collision, re-spline,
-        repeat.
+        for entry/exit). Each is re-splined and scored, and one is chosen so that:
+
+          - TOP is PREFERRED and used whenever it is FEASIBLE (clears this gate's
+            frame material and hits no obstacle);
+          - LEFT / RIGHT are FALLBACKS, used only when TOP is not feasible. Between
+            two feasible sides the previously chosen side is kept (replan stability);
+            otherwise the quicker/smoother side wins (shortest path, then least
+            curvature);
+          - if none is feasible the least-clipping placement is kept (TOP breaks
+            ties) and the greedy loop re-splines and tries again.
+
+        Previous sides are remembered per gate (keyed by rounded centre) in
+        ``self._prev_wrap_side`` and committed by plan(). Threaded AND passed gates
+        are handled. Greedy: fix the worst collision, re-spline, repeat.
         """
         self._frame_log = []
         wps = [np.asarray(w, dtype=float) for w in wps]
@@ -720,16 +722,17 @@ class GateCenterSplinePlanner(Planner):
 
             key = self._gate_key(c)
             prev = self._prev_wrap_side.get(key)
-            feasible = [s for s in ("left", "right", "top")
+            feasible = [s for s in ("top", "left", "right")
                         if evals[s]["obst"] == 0 and evals[s]["this_clip"] == 0]
-            if feasible:
-                if prev in ("left", "right") and "top" in feasible:
-                    chosen = "top"                                    # (2) side -> middle on replan
-                else:                                                 # (3) quicker, then smoother
-                    chosen = min(feasible, key=lambda s: (round(evals[s]["length"], 3),
-                                                          round(evals[s]["curv"], 3)))
-            else:                                                     # (1) none clean: least-bad
-                chosen = min(("left", "right", "top"),
+            if "top" in feasible:
+                chosen = "top"                                        # always prefer TOP
+            elif feasible:                                            # TOP infeasible: use a side
+                breakpoint()
+                chosen = prev if prev in feasible else min(           # keep prev side if feasible,
+                    feasible, key=lambda s: (round(evals[s]["length"], 3),   # else quicker/smoother
+                                             round(evals[s]["curv"], 3)))
+            else:                                                     # none clean: least-bad (TOP
+                chosen = min(("top", "left", "right"),                # wins ties: listed first)
                              key=lambda s: (evals[s]["obst"], evals[s]["this_clip"],
                                             evals[s]["frame"], round(evals[s]["length"], 3),
                                             round(evals[s]["curv"], 3)))

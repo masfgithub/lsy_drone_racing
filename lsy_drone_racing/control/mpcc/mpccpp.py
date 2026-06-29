@@ -381,7 +381,7 @@ class MPCCpp(ControllerInterface):
         r_roll: float = 0.3,
         r_pitch: float = 0.3,
         r_yaw: float = 0.5,
-        w_speed_gate: float = 5.5,
+        w_speed_gate: float = 3.5,
         W_nom: float = 0.3,
         H_nom: float = 0.3,
         tunnel_sigma: float = 0.4,
@@ -401,7 +401,7 @@ class MPCCpp(ControllerInterface):
         obstacle_slack_lin: float = 1e4,
         obstacle_slack_quad: float = 1e4,
         gate_soft: bool = True,
-        gate_weight: float = 2*1e3,
+        gate_weight: float = 3*1e3,
         n_obstacles: int | None = None,
     ):
         """Initialize the MPCC++ controller.
@@ -475,8 +475,8 @@ class MPCCpp(ControllerInterface):
         self._tick = 0
 
         self._gates_information = {
-            "total_length": 0.8, "total_height": 0.8,
-            "hole_width": 0.23,  "hole_height": 0.23,
+            "total_length": 0.9, "total_height": 0.9,
+            "hole_width": 0.18,  "hole_height": 0.18,
             "thickness": 0.35,   "margin": 0.05,
         }
         self._obstacles_information = {"d_min": 0.15, "total_height": 2.0}
