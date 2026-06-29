@@ -401,7 +401,7 @@ class MPCCpp(ControllerInterface):
         obstacle_slack_lin: float = 1e4,
         obstacle_slack_quad: float = 1e4,
         gate_soft: bool = True,
-        gate_weight: float = 4*1e3,
+        gate_weight: float = 2*1e3,
         n_obstacles: int | None = None,
     ):
         """Initialize the MPCC++ controller.

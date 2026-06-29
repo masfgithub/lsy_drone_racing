@@ -50,25 +50,25 @@ def make_obs() -> SimpleNamespace:
     )
 
     # Real-track config (overrides the standard layout above).
-    drone = np.array([1, -0.75056289434432983, 0.6750795841217041])
-    centers = np.array(
-        [
-            #[0.9006273746490479, -0.45056289434432983, 0.6750795841217041],
-            [0.7419164776802063, 1.0919069051742554, 1.2226346731185913],
-            [-0.45536500215530396, -0.16117151081562042, 0.6655994057655334],
-            [-0.8262401223182678, -1.460203766822815, 1.2101666927337646],
-        ]
-    )
-    obstacles = np.array(
-        [
-            [0.40722018480300903, 1.5295193195343018, 1.552402377128601],
-            [1.7187120914459229, -0.03745437040925026, 1.5517929792404175],
-            [-1.3613214492797852, -1.5580755472183228, 1.5421255826950073],
-            [-0.6277318477630615, -0.7380406260490417, 1.5428614616394043],
-        ]
-    )
-    yaws = [-1.2669805970326333, -2.194743180674716, 0.1733892323819487]
-    quats = np.array([yaw_quat_xyzw(p) for p in yaws])
+    #drone = np.array([-1.3889826536178589, 0.7477389574050903, 0.04194284975528717])
+    #centers = np.array(
+    #    [
+    #        [0.9006273746490479, -0.45056289434432983, 0.6750795841217041],
+    #        [0.7419164776802063, 1.0919069051742554, 1.2226346731185913],
+    #        [-0.45536500215530396, -0.16117151081562042, 0.6655994057655334],
+    #        [-0.8262401223182678, -1.460203766822815, 1.2101666927337646],
+    #    ]
+    #)
+    #obstacles = np.array(
+    #    [
+    #        [0.40722018480300903, 1.5295193195343018, 1.552402377128601],
+    #        [1.7187120914459229, -0.03745437040925026, 1.5517929792404175],
+    #        [-1.3613214492797852, -1.5580755472183228, 1.5421255826950073],
+    #        [-0.6277318477630615, -0.7380406260490417, 1.5428614616394043],
+    #    ]
+    #)
+    #yaws = [-0.8376858538952747, 1.2669805970326333, -2.194743180674716, 0.1733892323819487]
+    #quats = np.array([yaw_quat_xyzw(p) for p in yaws])
 
     return SimpleNamespace(
         pBLL=drone,
@@ -118,12 +118,12 @@ def main() -> None:
                                            planner._obstacle_d_min)
     final_frame = planner._frame_clips(traj.positions)
     if planner._frame_log:
-        print("\nGate-frame re-crossing pushes:")
+        print("\nGate-frame wraps (left/right/top):")
         for d in planner._frame_log:
-            print(f"  gate {d['gate']}: re-crossing at offset {d['from_offset']} m "
-                  f"-> wrapped '{d['side']}' side at {d['wrapped_to']} m "
-                  f"({d['points']} wps; near {d['near_obst']} obst viol, "
-                  f"far {d['far_obst']} obst viol)")
+            tag = " [passed gate]" if d.get("past") else ""
+            print(f"  gate {d['gate']}{tag}: wrapped '{d['side']}' "
+                  f"(prev '{d['prev_side']}', feasible {d['feasible']}, "
+                  f"obst {d['obst']}) at radius {d['wrapped_to']} m")
     print(f"\nFinal trajectory obstacle violations: {final_viol}")
     print(f"Final trajectory gate-frame clips:    {final_frame}")
 
