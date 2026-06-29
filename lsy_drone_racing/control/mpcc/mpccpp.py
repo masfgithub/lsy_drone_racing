@@ -369,7 +369,7 @@ class MPCCpp(ControllerInterface):
         info: dict,
         config: dict,
         t_total: int,
-        N_horizon: int = 40,
+        N_horizon: int = 20,
         T_horizon: float = 0.7,
         mu: float = 8.0,
         q_lag: float = 80.0,
@@ -381,7 +381,7 @@ class MPCCpp(ControllerInterface):
         r_roll: float = 0.3,
         r_pitch: float = 0.3,
         r_yaw: float = 0.5,
-        w_speed_gate: float = 5.0,
+        w_speed_gate: float = 5.5,
         W_nom: float = 0.3,
         H_nom: float = 0.3,
         tunnel_sigma: float = 0.4,
@@ -401,7 +401,7 @@ class MPCCpp(ControllerInterface):
         obstacle_slack_lin: float = 1e4,
         obstacle_slack_quad: float = 1e4,
         gate_soft: bool = True,
-        gate_weight: float = 3*1e3,
+        gate_weight: float = 4*1e3,
         n_obstacles: int | None = None,
     ):
         """Initialize the MPCC++ controller.
@@ -442,11 +442,12 @@ class MPCCpp(ControllerInterface):
                                 Raise to slow/tighten more at gates, lower to fly faster.
             gate_sigma:         Arc-length width (m) of that bump. Keep below ~half the
                                 gate spacing so bumps don't overlap and brake everywhere.
-            tunnel_mode:        Tunnel centerline source. "gate" (default) anchors the
-                                centerline to the gate centers with tangents along the
-                                gate normals, so the tube/pinch sit ON the real gate
-                                openings (Krinner et al. Sec. IV-A). "planner" uses the
-                                planner's racing line as the centerline (legacy).
+            tunnel_mode:        Tunnel centerline source. "planner" (default) uses the
+                                planner's racing line as the centerline, so the tube
+                                follows the freshly planned (avoidance-aware) trajectory.
+                                "gate" anchors the centerline to the gate centers with
+                                tangents along the gate normals, so the tube/pinch sit ON
+                                the real gate openings (Krinner et al. Sec. IV-A).
             gate_tangent_len:   Helper-knot offset delta (m) along each gate normal for
                                 the "gate" centerline; larger = straighter through-gate
                                 approach. Unused in "planner" mode.
@@ -474,8 +475,8 @@ class MPCCpp(ControllerInterface):
         self._tick = 0
 
         self._gates_information = {
-            "total_length": 0.9, "total_height": 0.9,
-            "hole_width": 0.18,  "hole_height": 0.18,
+            "total_length": 0.8, "total_height": 0.8,
+            "hole_width": 0.23,  "hole_height": 0.23,
             "thickness": 0.35,   "margin": 0.05,
         }
         self._obstacles_information = {"d_min": 0.15, "total_height": 2.0}
@@ -868,17 +869,75 @@ class MPCCpp(ControllerInterface):
         self._theta_pred = np.clip(
             np.arange(self._N + 1) * self._dt * v_guess, 0.0, self._ref.length
         )
-        self._reinit_warmstart()
+        # Seed the warm start along the DESIRED (planner) trajectory, not the
+        # gate-anchored tunnel centerline.
+        planner_pos = (np.asarray(trajectory.positions, dtype=float)
+                       if hasattr(trajectory, "positions") else None)
+        self._reinit_warmstart(v_guess, planner_pos)
 
-    def _reinit_warmstart(self) -> None:
-        """Re-seed _x_warm / _u_warm with hover states along the current centerline.
+        # FORCE the new warm start into the solver NOW, overriding its retained
+        # internal iterate (the previous, stale solution). control() re-applies
+        # these on its next call too, but pushing them here makes the reset
+        # unconditional and immediate.
+        for k in range(self._N + 1):
+            self._solver.set(k, "x", self._x_warm[k])
+        for k in range(self._N):
+            self._solver.set(k, "u", self._u_warm[k])
+        src = "planner trajectory" if planner_pos is not None else "tunnel centerline"
+        print(f"[MPCC++] Warm start RESET from {src} "
+              f"(v_theta seed {v_guess:.2f} m/s, theta 0..{float(self._theta_pred[-1]):.2f} m, "
+              f"{self._N + 1} nodes).")
 
-        Solver stage values are (re)applied from these caches at the next
-        control() call, which also pins node 0 to the measured state.
+    @staticmethod
+    def _sample_along(path: np.ndarray, arc_lengths) -> np.ndarray:
+        """Sample a dense polyline ``path`` (n,3) at the given cumulative arc
+        lengths, linearly interpolating between vertices (clamped to the ends).
+        Used to lay the warm start onto the planner's actual trajectory by arc
+        length, both paths being rooted at the current drone position."""
+        path = np.asarray(path, dtype=float)
+        seg = np.linalg.norm(np.diff(path, axis=0), axis=1)
+        s = np.concatenate([[0.0], np.cumsum(seg)])
+        total = float(s[-1])
+        out = np.empty((len(arc_lengths), 3))
+        for i, a in enumerate(arc_lengths):
+            a = float(np.clip(a, 0.0, total))
+            j = max(0, min(len(path) - 2, int(np.searchsorted(s, a) - 1)))
+            denom = s[j + 1] - s[j]
+            t = 0.0 if denom < 1e-9 else (a - s[j]) / denom
+            out[i] = path[j] + t * (path[j + 1] - path[j])
+        return out
+
+    def _reinit_warmstart(self, v_guess: float = 1.0,
+                          planner_pos: np.ndarray | None = None) -> None:
+        """Re-seed _x_warm / _u_warm along the NEW PLANNED (desired) trajectory.
+
+          - position x[0:3]: sampled from the planner's trajectory ``planner_pos``
+            by arc length theta_pred[k] -- the ACTUAL desired path (avoidance, frame
+            wraps and all). Falls back to the tunnel centerline self._ref.eval only
+            if no planner positions are supplied.
+          - velocity x[3:6]: zero (the SQP derives it).
+          - f_col/f_cmd: hover thrust; theta = theta_pred[k] (from _nominal_state).
+          - input v_theta = v_guess so the guessed progress still advances.
+
+        This is the fix for "the warm start never updates": the seed used to read
+        self._ref.eval, but in "gate" tunnel mode self._ref is a gate-anchored
+        centerline that ignores the planner's racing line, so the warm start looked
+        the same on every replan. Seeding from planner_pos makes it follow the
+        freshly planned trajectory.
         """
-        self._x_warm = [self._nominal_state(float(self._theta_pred[k]))
-                        for k in range(self._N + 1)]
-        self._u_warm = [np.zeros(self._nu) for _ in range(self._N)]
+        if planner_pos is not None and len(np.asarray(planner_pos)) >= 2:
+            seed = self._sample_along(planner_pos, self._theta_pred)
+        else:
+            seed = np.array([self._ref.eval(float(t)) for t in self._theta_pred])
+        x_warm = []
+        for k in range(self._N + 1):
+            x_k = self._nominal_state(float(self._theta_pred[k]))  # hover thrust, theta
+            x_k[0:3] = seed[k]                                     # desired-trajectory position
+            x_warm.append(x_k)                                     # velocity x[3:6] stays 0
+        self._x_warm = x_warm
+        u_seed = np.zeros(self._nu)
+        u_seed[4] = v_guess                                        # v_theta: forward progress
+        self._u_warm = [u_seed.copy() for _ in range(self._N)]
 
     def reset(self) -> None:
         """Reset internal controller state for a new episode."""

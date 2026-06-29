@@ -74,6 +74,12 @@ FRAME_WRAP_SPACING = 0.30
 # run. Set False to disable the feature entirely.
 SHOW_PLAN_PLOT = True
 
+# Debug: when True, plan() prints the full obs state (paste-ready) whenever a real
+# violation survives planning -- a residual obstacle hit, or more than a trivial
+# 1-2 sample frame bow. Lets a failing replan be captured from the sim console and
+# reproduced offline. Set False once captured.
+DUMP_VIOLATION_STATE = True
+
 # Offset (m) along each gate normal used to build the inter-gate detour waypoint:
 # the detour is the midpoint between the previous gate's exit-side point
 # (centre + this * normal) and the next gate's approach-side point
@@ -180,6 +186,10 @@ class GateCenterSplinePlanner(Planner):
         self._frame_log: list[dict] = []
         self._gate_centers: np.ndarray | None = None
         self._gate_rot: np.ndarray | None = None
+        # Passed gates (index < pTLL_index): no longer threaded, but still physical
+        # frame obstacles to avoid. Populated by _build_waypoints on each plan.
+        self._past_gate_centers: np.ndarray = np.zeros((0, 3))
+        self._past_gate_rot: np.ndarray = np.zeros((0, 3, 3))
         self._freq = config.env.freq
         self.trajectory: Trajectory | None = None
         self._waypoints: np.ndarray | None = None
@@ -188,29 +198,99 @@ class GateCenterSplinePlanner(Planner):
 
     # ----------------------------------------------------------------------
 
-    def plan(self, obs: "EnvState_t", t_elapsed: float = 0.0) -> Trajectory:
-        """Build waypoints, reroute around obstacles, fit the spline, return Trajectory."""
-        wps, labels = self._build_waypoints(obs, return_labels=True)
-        obstacles = np.asarray(getattr(obs, "pOLL_array", np.zeros((0, 3))), dtype=float)
+    def _plan_once(self, obs, t_elapsed, include_attitude):
+        """Run one full planning pass (build -> obstacle avoid -> frame wrap ->
+        spline -> violation check). Returns a result dict; does not mutate the
+        public trajectory. Per-pass avoid/frame logs are captured so the chosen
+        pass can restore them."""
+        wps, labels = self._build_waypoints(obs, return_labels=True,
+                                            include_attitude=include_attitude)
+        obstacles = np.asarray(getattr(obs, "pOLL_array", np.zeros((0, 3))),
+                               dtype=float)
         wps, labels = self._avoid(wps, labels, obstacles, t_elapsed)
         wps, labels = self._avoid_frame_recrossings(wps, labels, obstacles, t_elapsed)
         spline, t_sample = self._create_spline(wps, t_elapsed)
         positions = spline(t_sample)
         velocities = spline(t_sample, nu=1)
-        self.trajectory = Trajectory(positions, velocities, t_sample)
-        self._waypoints = wps
-        self._waypoint_labels = labels
+        frame_viol = self._check_frame_violations(positions)
+        obs_xy = obstacles[:, :2] if obstacles.size else np.zeros((0, 2))
+        obst_viol = (self._count_violations(positions[:, :2], obs_xy,
+                     self._obstacle_d_min) if obs_xy.size else 0)
+        return {
+            "wps": wps, "labels": labels, "positions": positions,
+            "velocities": velocities, "t_sample": t_sample,
+            "frame_viol": frame_viol, "obst_viol": obst_viol,
+            "obstacles": obstacles,
+            "avoid_log": list(self._avoid_log),
+            "frame_log": list(self._frame_log),
+        }
+
+    @staticmethod
+    def _violation_score(r) -> tuple[int, int]:
+        """(#obstacles violated, total frame-material samples). Lower is cleaner."""
+        return (int(r["obst_viol"]), int(sum(n for _, n in r["frame_viol"])))
+
+    @staticmethod
+    def _is_real_violation(r) -> bool:
+        """True if a pass left a residual obstacle hit or more than a trivial
+        1-2 sample frame bow (the threshold used for the debug dump)."""
+        ov, fv = GateCenterSplinePlanner._violation_score(r)
+        return ov > 0 or fv > 2
+
+    def plan(self, obs: "EnvState_t", t_elapsed: float = 0.0) -> Trajectory:
+        """Build waypoints, reroute around obstacles, fit the spline, return Trajectory."""
+        # Primary pass: with the velocity/thrust lead (attitude) waypoint.
+        best = self._plan_once(obs, t_elapsed, include_attitude=True)
+        used_attitude = True
+        # If the lead waypoint led to a real violation (e.g. a replan whose velocity
+        # points into a gate hole, which launches the spline through the frame and
+        # tangles the wrap), retry without it and keep whichever pass is cleaner.
+        if self._is_real_violation(best):
+            alt = self._plan_once(obs, t_elapsed, include_attitude=False)
+            if self._violation_score(alt) < self._violation_score(best):
+                best, used_attitude = alt, False
+
+        # Commit the chosen pass (restore its avoid/frame logs for the diagnostics).
+        self._avoid_log = best["avoid_log"]
+        self._frame_log = best["frame_log"]
+        self._waypoints = best["wps"]
+        self._waypoint_labels = best["labels"]
+        positions = best["positions"]
+        obstacles = best["obstacles"]
+        self.trajectory = Trajectory(positions, best["velocities"], best["t_sample"])
 
         # Always check whether the final centerline actually enters any gate's
         # frame MATERIAL (strict: inside the half-thickness and between the hole and
         # outer edges -- no safety margin). Stored on self._frame_violations and
         # warned about, so it is visible in the console even with the figure off.
-        self._frame_violations = self._check_frame_violations(positions)
+        self._frame_violations = best["frame_viol"]
         if self._frame_violations:
             detail = ", ".join(f"gate {gi} ({n} samples)"
                                for gi, n in self._frame_violations)
+            note = "" if used_attitude else " [lead waypoint dropped]"
             print(f"[GateCenterSplinePlanner] WARNING: trajectory enters gate "
-                  f"frame material: {detail}")
+                  f"frame material: {detail}{note}")
+
+        # One-shot debug dump: if a real violation survived planning (a residual
+        # obstacle hit, or more than a trivial 1-2 sample frame bow), print the full
+        # obs in paste-ready form so this exact (often replan) state can be
+        # reproduced offline. Toggle DUMP_VIOLATION_STATE off once captured.
+        if DUMP_VIOLATION_STATE:
+            obst_viol = best["obst_viol"]
+            frame_total = sum(n for _, n in self._frame_violations)
+            if obst_viol > 0 or frame_total > 2:
+                print("=== PLANNER VIOLATION STATE (paste back to reproduce) ===")
+                print(f"# pTLL_index={int(getattr(obs, 'pTLL_index', 0))}  "
+                      f"obst_viol={obst_viol}  frame_viol={self._frame_violations}  "
+                      f"lead_dropped={not used_attitude}")
+                print(f"drone      = {np.asarray(obs.pBLL, float).tolist()}")
+                print(f"vel        = {np.asarray(getattr(obs, 'vBLL', np.zeros(3)), float).tolist()}")
+                print(f"qBLB       = {np.asarray(getattr(obs, 'qBLB', [0, 0, 0, 1]), float).tolist()}")
+                print(f"centers    = {np.asarray(obs.pTLL_array, float).tolist()}")
+                print(f"quats      = {np.asarray(obs.qTLT_array, float).tolist()}")
+                print(f"obstacles  = {np.asarray(obs.pOLL_array, float).tolist()}")
+                print(f"pTLL_index = {int(getattr(obs, 'pTLL_index', 0))}")
+                print("=== END VIOLATION STATE ===")
 
         # After EACH plan (init and every sim replan), show the diagnostic figure
         # if the flag is on. Blocking -- the run halts here until you close the
@@ -241,9 +321,15 @@ class GateCenterSplinePlanner(Planner):
         return normals / (np.linalg.norm(normals, axis=1, keepdims=True) + 1e-12)
 
     def _build_waypoints(
-        self, obs: "EnvState_t", return_labels: bool = False
+        self, obs: "EnvState_t", return_labels: bool = False,
+        include_attitude: bool = True,
     ) -> np.ndarray | tuple[np.ndarray, list[str]]:
-        """Construct the waypoint list (start, attitude, per-gate approach/centre/exit, detours)."""
+        """Construct the waypoint list (start, attitude, per-gate approach/centre/exit, detours).
+
+        ``include_attitude=False`` drops the velocity/thrust lead waypoint. plan()
+        uses that fallback when the lead waypoint drives the spline into a violation
+        (e.g. a mid-flight replan whose velocity points straight into a gate hole).
+        """
         drone = np.asarray(obs.pBLL, dtype=float).reshape(3)
         gi = int(getattr(obs, "pTLL_index", 0))
         centers = np.asarray(obs.pTLL_array, dtype=float)[gi:].reshape(-1, 3)
@@ -251,6 +337,19 @@ class GateCenterSplinePlanner(Planner):
         normals = self._gate_normals(centers, quats, drone)
         self._gate_centers = centers
         self._gate_rot = R.from_quat(quats).as_matrix().reshape(-1, 3, 3)
+        # Passed gates stay physical obstacles: keep their centres/orientations so
+        # the frame-material check and the wrap handler still avoid them, even
+        # though we no longer thread them. A post-pass replan (e.g. triggered by a
+        # nearby obstacle) can otherwise route the line straight back through the
+        # frame of the gate we just cleared.
+        all_centers = np.asarray(obs.pTLL_array, dtype=float).reshape(-1, 3)
+        all_quats = np.asarray(obs.qTLT_array, dtype=float).reshape(-1, 4)
+        if gi > 0:
+            self._past_gate_centers = all_centers[:gi]
+            self._past_gate_rot = R.from_quat(all_quats[:gi]).as_matrix().reshape(-1, 3, 3)
+        else:
+            self._past_gate_centers = np.zeros((0, 3))
+            self._past_gate_rot = np.zeros((0, 3, 3))
 
         # Lead waypoint: leave the drone along its current motion so the spline
         # doesn't snap sideways out of the gate. On a replan mid-flight the drone
@@ -268,8 +367,14 @@ class GateCenterSplinePlanner(Planner):
             lead_dir = R.from_quat(q_body).apply([0.0, 0.0, 1.0])
             lead_dir = lead_dir / (np.linalg.norm(lead_dir) + 1e-12)
 
-        wps: list[np.ndarray] = [drone, drone + self._attitude_offset * lead_dir]
-        labels: list[str] = ["start", "attitude"]
+        wps: list[np.ndarray]
+        labels: list[str]
+        if include_attitude:
+            wps = [drone, drone + self._attitude_offset * lead_dir]
+            labels = ["start", "attitude"]
+        else:
+            wps = [drone]
+            labels = ["start"]
         for i in range(len(centers)):
             if i > 0:
                 # detour = midpoint between the previous gate's exit-side point
@@ -428,6 +533,21 @@ class GateCenterSplinePlanner(Planner):
 
         return np.asarray(wps), labels
 
+    def _frame_gates(self):
+        """Gates the path must respect as frame obstacles, as (centre, Rg,
+        is_threaded) tuples: the remaining gates (threaded, from pTLL_index on)
+        first, then the PASSED gates (obstacle-only -- no longer threaded, but their
+        frame material is still a collision risk). Used by every frame check and the
+        wrap handler so a gate keeps avoiding even after it has been passed.
+        """
+        gates = []
+        if self._gate_centers is not None:
+            for c, Rg in zip(self._gate_centers, self._gate_rot):
+                gates.append((c, Rg, True))
+        for c, Rg in zip(self._past_gate_centers, self._past_gate_rot):
+            gates.append((c, Rg, False))
+        return gates
+
     def _frame_material_mask(self, pos: np.ndarray) -> np.ndarray:
         """Boolean mask of samples that sit inside any gate's frame MATERIAL.
 
@@ -435,14 +555,13 @@ class GateCenterSplinePlanner(Planner):
         frame, |x| <= thickness/2 (inside the gate's depth) and the in-plane offset
         is between the hole edge and the outer edge (hole_half < max(|y|,|z|) <=
         outer_half). This is the true collision region, unlike the margin-padded
-        ``_frame_clips``. Used by the always-on plan check and the figure highlight.
+        ``_frame_clips``. Covers threaded AND passed gates. Used by the always-on
+        plan check and the figure highlight.
         """
         pos = np.asarray(pos, dtype=float)
         mask = np.zeros(len(pos), dtype=bool)
-        if self._gate_centers is None:
-            return mask
         fh, oh, hw = 0.5 * self._gate_thickness, self._gate_outer_half, self._gate_hole_half
-        for c, Rg in zip(self._gate_centers, self._gate_rot):
+        for c, Rg, _ in self._frame_gates():
             local = (pos - c) @ Rg
             lat = np.maximum(np.abs(local[:, 1]), np.abs(local[:, 2]))
             mask |= (np.abs(local[:, 0]) <= fh) & (lat > hw) & (lat <= oh)
@@ -452,15 +571,14 @@ class GateCenterSplinePlanner(Planner):
         """Per-gate count of samples inside that gate's frame material (strict).
 
         Returns a list of (gate_index, sample_count) for the gates that are hit;
-        empty if the trajectory is clean. Same material test as
-        ``_frame_material_mask`` but reported per gate for the warning message.
+        empty if clean. Indexes the combined frame-gate list (threaded gates first,
+        then passed gates), so a clipped PASSED gate is reported too. Same material
+        test as ``_frame_material_mask``.
         """
         pos = np.asarray(pos, dtype=float)
-        if self._gate_centers is None:
-            return []
         fh, oh, hw = 0.5 * self._gate_thickness, self._gate_outer_half, self._gate_hole_half
         hits = []
-        for gi, (c, Rg) in enumerate(zip(self._gate_centers, self._gate_rot)):
+        for gi, (c, Rg, _) in enumerate(self._frame_gates()):
             local = (pos - c) @ Rg
             lat = np.maximum(np.abs(local[:, 1]), np.abs(local[:, 2]))
             n = int(np.sum((np.abs(local[:, 0]) <= fh) & (lat > hw) & (lat <= oh)))
@@ -475,14 +593,15 @@ class GateCenterSplinePlanner(Planner):
         slab (|x| <= thickness/2 + margin) AND is laterally outside the safe hole
         (|y| or |z| > safe_hole_half) while still inside the outer frame extent
         (|y|, |z| <= outer_half) -- i.e. it sits where the frame material is, at a
-        depth where the frame exists. Returns the number of gates clipped.
+        depth where the frame exists. Covers threaded AND passed gates. Returns the
+        number of gates clipped.
         """
-        if not self._frame_keepout or self._gate_centers is None:
+        if not self._frame_keepout:
             return 0
         sh, oh, slab = self._safe_hole_half, self._gate_outer_half, self._depth_slab_half
         pos = np.asarray(pos, dtype=float)
         count = 0
-        for c, Rg in zip(self._gate_centers, self._gate_rot):
+        for c, Rg, _ in self._frame_gates():
             local = np.abs((pos - c) @ Rg)        # |x| depth, |y| width, |z| height
             in_slab = local[:, 0] <= slab
             in_outer = (local[:, 1] <= oh) & (local[:, 2] <= oh)
@@ -529,6 +648,7 @@ class GateCenterSplinePlanner(Planner):
         obs_xy = obstacles[:, :2] if obstacles.size else np.zeros((0, 2))
         R = self._gate_outer_half + FRAME_WRAP_CLEARANCE     # radius past the frame
         D = FRAME_WRAP_SPACING                                # depth between wrap points
+        frame_gates = self._frame_gates()                    # threaded + passed gates
 
         for _ in range(self._max_avoid_iters):
             spline, t_sample = self._create_spline(np.asarray(wps), t_elapsed)
@@ -537,7 +657,7 @@ class GateCenterSplinePlanner(Planner):
             if hit is None:
                 break
             gi, k = hit
-            c, Rg = self._gate_centers[gi], self._gate_rot[gi]
+            c, Rg, threaded = frame_gates[gi]
             normal = Rg[:, 0] / (np.linalg.norm(Rg[:, 0]) + 1e-12)
             yaxis = Rg[:, 1] / (np.linalg.norm(Rg[:, 1]) + 1e-12)
             zaxis = Rg[:, 2] / (np.linalg.norm(Rg[:, 2]) + 1e-12)
@@ -583,41 +703,51 @@ class GateCenterSplinePlanner(Planner):
             labels = labels[:ins] + ["frame"] * 3 + labels[ins:]
             self._frame_log.append({
                 "gate": int(gi), "from_offset": round(m, 3), "wrapped_to": round(R, 3),
-                "points": 3, "side": chosen,
+                "points": 3, "side": chosen, "past": not threaded,
                 "near_obst": evals["near"]["obst"], "far_obst": evals["far"]["obst"],
             })
         return np.asarray(wps), labels
 
     def _worst_recrossing(self, pos):
-        """Worst SECOND crossing of a gate plane -- through the hole or frame, or None.
+        """Worst gate-plane crossing to wrap -- across threaded AND passed gates.
 
-        Each gate must be threaded exactly once. We find the actual gate-plane
-        crossings (sign changes of the local depth coordinate ``x``) that fall
-        within the outer frame extent. The crossing nearest the gate centre is the
-        intended thread; every *other* crossing is a re-crossing the drone should
-        not make -- and that now includes a second pass straight back through the
-        open hole, not just clips of the frame ring. Returns (gate_idx, sample_idx)
-        for the re-crossing sitting closest to the gate plane (the clearest second
-        pass); the greedy caller pushes it around the frame and re-splines.
+        Threaded gate: each must be threaded exactly once. Among the plane crossings
+        within the outer frame extent, the one nearest the gate centre is the
+        intended thread; every *other* crossing (a second pass through the hole or a
+        frame clip) is a re-crossing to wrap.
+
+        Passed gate (obstacle-only): there is NO intended thread, so any plane
+        crossing that clips the frame MATERIAL (lateral between the hole and outer
+        edges) is a collision to wrap. Passing through its open hole is harmless and
+        ignored.
+
+        Returns (gate_idx, sample_idx) -- gate_idx into ``_frame_gates()`` -- for the
+        crossing sitting closest to the gate plane (the clearest pass), or None.
         """
-        if self._gate_centers is None:
+        gates = self._frame_gates()
+        if not gates:
             return None
-        oh = self._gate_outer_half
+        oh, hw = self._gate_outer_half, self._gate_hole_half
         worst, worst_depth = None, np.inf
-        for gi, (c, Rg) in enumerate(zip(self._gate_centers, self._gate_rot)):
+        for gi, (c, Rg, threaded) in enumerate(gates):
             L = (pos - c) @ Rg
             x = L[:, 0]                                   # signed depth along normal
             lat = np.maximum(np.abs(L[:, 1]), np.abs(L[:, 2]))
-            sc = ((np.sign(x[:-1]) != np.sign(x[1:]))     # plane crossing k -> k+1
-                  & (lat[:-1] <= oh) & (lat[1:] <= oh))   # within the outer frame
-            cross = np.where(sc)[0]
-            if len(cross) <= 1:                           # threaded once (or not): fine
-                continue
-            kc = int(np.argmin(np.linalg.norm(pos - c, axis=1)))
-            intended = cross[int(np.argmin(np.abs(cross - kc)))]
-            for k in cross:
-                if k == intended:
+            crossing = np.sign(x[:-1]) != np.sign(x[1:])  # plane crossing k -> k+1
+            if threaded:
+                sc = crossing & (lat[:-1] <= oh) & (lat[1:] <= oh)
+                cross = np.where(sc)[0]
+                if len(cross) <= 1:                       # threaded once (or not): fine
                     continue
+                kc = int(np.argmin(np.linalg.norm(pos - c, axis=1)))
+                intended = cross[int(np.argmin(np.abs(cross - kc)))]
+                recross = [int(k) for k in cross if k != intended]
+            else:
+                # passed gate: wrap any crossing through the frame material
+                mat = (lat > hw) & (lat <= oh)
+                sc = crossing & (mat[:-1] | mat[1:])
+                recross = [int(k) for k in np.where(sc)[0]]
+            for k in recross:
                 ksamp = k if abs(x[k]) <= abs(x[k + 1]) else k + 1   # sample on the plane
                 depth = abs(float(x[ksamp]))
                 if depth < worst_depth:                   # nearest the plane = clearest pass
@@ -695,9 +825,9 @@ def plot_plan(planner, obs, traj=None, *, show=True, block=True, prev_fig=None,
     Call AFTER ``planner.plan(obs)`` so the waypoints and logs are populated. Draws
     the fitted spline, every labelled waypoint (start / attitude / approach / gate /
     exit / detour / avoid / frame-wrap arc), any samples that enter gate frame
-    material (highlighted red), the first obstacle reroute's left/right alternatives,
-    each gate's outer / hole / safe-hole squares with its normal, and the obstacle
-    keep-out cylinders.
+    material (highlighted red), each obstacle reroute's chosen and alternative
+    candidate trajectories, each gate's outer / hole / safe-hole squares with its
+    normal, and the obstacle keep-out cylinders.
 
     show/block control an interactive window (blocking by default -- close it to
     continue; pass block=False for a non-blocking live window, e.g. the per-plan
@@ -745,13 +875,24 @@ def plot_plan(planner, obs, traj=None, *, show=True, block=True, prev_fig=None,
                    label=lab if lab not in seen else None, depthshade=False)
         seen.add(lab)
 
-    for d in getattr(planner, "_avoid_log", [])[:1]:
-        for side, style in (("left", "--"), ("right", ":")):
-            cp = d[f"{side}_pos"]
-            chosen = " (chosen)" if side == d["chosen"] else ""
-            ax.plot(cp[:, 0], cp[:, 1], cp[:, 2], style, lw=1.1, alpha=0.7,
-                    color="tab:green" if side == "left" else "tab:red",
-                    label=f"alt {side}{chosen}")
+    # Obstacle reroute candidates. For EACH violated obstacle we compute a LEFT
+    # and a RIGHT trajectory and keep the better one; draw both for every obstacle
+    # so the calculated ALTERNATIVE (the side we did not take) is always visible.
+    # Colour is per obstacle decision; the alternative is dashed/bold, the chosen
+    # side dotted/faint (the grey spline above already follows the chosen route).
+    avoid_log = getattr(planner, "_avoid_log", [])
+    cand_cmap = plt.get_cmap("tab10")
+    for idx, d in enumerate(avoid_log):
+        o = int(d["obstacle"])
+        col = cand_cmap(idx % 10)
+        chosen = d["chosen"]
+        alt = "right" if chosen == "left" else "left"
+        ap = np.asarray(d[f"{alt}_pos"], float)
+        ax.plot(ap[:, 0], ap[:, 1], ap[:, 2], "--", lw=1.5, alpha=0.9, color=col,
+                label=f"alt obs {o} ({alt})")
+        cp = np.asarray(d[f"{chosen}_pos"], float)
+        ax.plot(cp[:, 0], cp[:, 1], cp[:, 2], ":", lw=1.0, alpha=0.45, color=col,
+                label=f"chosen obs {o} ({chosen})")
 
     drone = np.asarray(obs.pBLL, float)
     tdir = R.from_quat(np.asarray(obs.qBLB, float)).apply([0.0, 0.0, 1.0])
