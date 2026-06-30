@@ -475,7 +475,7 @@ class MPCCpp(ControllerInterface):
 
         self._gates_information = {
             "total_length": 0.9, "total_height": 0.9,
-            "hole_width": 0.18,  "hole_height": 0.18,
+            "hole_width": 0.1,  "hole_height": 0.1,
             "thickness": 0.35,   "margin": 0.05,
         }
         self._obstacles_information = {"d_min": 0.15, "total_height": 2.0}
