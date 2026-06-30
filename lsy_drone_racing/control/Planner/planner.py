@@ -17,11 +17,11 @@ __all__ = ["Trajectory", "Planner", "DEFAULT_MAX_SPEED"]
 
 DEFAULT_MAX_SPEED = 12.0  # m/s
 FRAME_WIDTH = 0.72
-FRAME_OPENING = 0.4
-FRAME_THICK = 0.5
+FRAME_OPENING = 0.2
+FRAME_THICK = 0.4
 POST_WIDTH = 0.2
 CLEARANCE = 0.1
-R_OBSTACLE = 0.2
+R_OBSTACLE = 0.15
 DRONE_RADIUS = 0.05
 
 
@@ -325,9 +325,10 @@ class Planner(ABC):
         r_obsticle = R_OBSTACLE
 
         distance = np.linalg.norm(p_ref_LL[0:2] - pOLL_array[:, 0:2], axis=1)
+        
         is_inside_obsticle = np.any(distance < r_obsticle)
         obsticle = pOLL_array[np.argmin(distance)]
-
+        
         return is_inside_obsticle, obsticle
     
     def _get_obsticle_push(
@@ -355,7 +356,7 @@ class Planner(ABC):
             i += 1
         distance = p_ref_LL[0:2] - obsticle[0:2]
         #breakpoint()
-        push = i * push_steps
+        push = i * push_steps + 0.03
         return push
     
     def _check_gate3(
@@ -428,12 +429,14 @@ class Planner(ABC):
         i = 0
         p_ref_LL = p_ref_LL.copy()
 
+        #p_ref_LL += (FRAME_OPENING + 0.02) * push_vector
+
         while inside_gate:
             p_ref_LL += push_steps * push_vector
             inside_gate, _, _ = self._check_gate3(p_ref_LL, np.array([centre]), np.array([yaw]))
             i += 1
         #breakpoint()
-        push = i * push_steps
+        push = i * push_steps + 0.1
         return push
     
     def _get_gate_push_vector(

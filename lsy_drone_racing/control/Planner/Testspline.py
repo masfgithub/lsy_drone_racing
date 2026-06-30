@@ -145,15 +145,15 @@ def main():
             (np.array([1.05, 0.75, 1.2]),  2.35),
             (np.array([-1.0, -0.25, 0.7]), 3.14),
             (np.array([0.0, -0.75, 1.2]),  0.0)]
-    obstacles = [[0.0,  0.75, 1.55],
+    obstacles = [[0.0,  0.6, 1.55],
                 [1.0,  0.25, 1.55],
                 [-1.27, -0.4, 1.55],
                 [-0.7, -0.75, 1.55]]
     
-    start = [-0.3, 0.0, 0.01]
-    gates = [(np.array([-1.0, -0.25, 0.7]), 3.14),
-            (np.array([0.0, -0.75, 1.2]),  0.0)]
-    obstacles = [[-1.27, -0.4, 1.55]]
+    #start = [-0.3, 0.0, 0.01]
+    #gates = [(np.array([-1.0, -0.25, 0.7]), 3.14),
+    #        (np.array([0.0, -0.75, 1.2]),  0.0)]
+    #obstacles = [[-1.27, -0.4, 1.55]]
 
     cfg = SimpleNamespace(env=SimpleNamespace(freq=50))
     planner = SplinePlanner(make_obs(start, gates, obstacles), {}, cfg, t_total=12)

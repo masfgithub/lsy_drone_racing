@@ -13,14 +13,15 @@ from crazyflow.sim.visualize import draw_capsule, draw_line, draw_points
 
 from lsy_drone_racing.control.basic_planner import BasicPlanner
 from lsy_drone_racing.control.basic_planner_mpccpp import BasicPlannerMPCCpp
-from lsy_drone_racing.control.SplinePlanner_2 import SplinePlanner
+#from lsy_drone_racing.control.SplinePlanner_2 import SplinePlanner
 from lsy_drone_racing.control.gate_spline_planner import GateCenterSplinePlanner
 from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.mpcc.mpcc import MPCC
 from lsy_drone_racing.control.mpcc.mpccpp import MPCCpp
 from lsy_drone_racing.control.nmpc.nmpc import NMPC
-from lsy_drone_racing.control.Planner.new_planner import SplinePlanner
+from lsy_drone_racing.control.Planner.smart_planner import SplinePlanner
+from lsy_drone_racing.control.Planner.replan_debug import ReplanDebugger
 
 # Active controller: "mpccpp" | "mpcc" | "nmpc"
 CONTROLLER_TYPE = "mpccpp"
@@ -428,10 +429,16 @@ class DroneRacingPipeline(Controller):
             # the racing line loops back past a gate it already passed. MPCC++ uses
             # only the path geometry (its v_theta sets the speed), so this line
             # becomes the tunnel centerline directly.
-            self._planner = GateCenterSplinePlanner(
-                env_states, info, config, t_plan, max_speed=2.0
+            #self._planner = GateCenterSplinePlanner(
+            #    env_states, info, config, t_plan, max_speed=2.0
+            #)
+            self._planner = SplinePlanner(
+                env_states, info, config, t_plan
             )
             trajectory = self._planner.plan(env_states, 0.0)
+            self._debugger = ReplanDebugger(output_dir="replan_debug")
+            #self._debugger.dump(env_states, trajectory, self._planner,
+            #                    tag="initial", t_elapsed=0.0)
             # plan() itself pops up / refreshes the diagnostic figure after every
             # plan (init and each replan) when SHOW_PLAN_PLOT is on -- nothing to do
             # here. Toggle that flag in gate_spline_planner.py to enable/disable.
@@ -483,6 +490,8 @@ class DroneRacingPipeline(Controller):
                 self._controller.replan_reference(trajectory, env_states)
                 self._force_replan = False
                 print("[MPCC++] Replanned -> tube + theta reset")
+                #self._debugger.dump(env_states, trajectory, self._planner,
+                #        t_elapsed=self._tick / self._freq)
             return self._controller.control(env_states, info)
 
         # MPCC / NMPC: original flow.
