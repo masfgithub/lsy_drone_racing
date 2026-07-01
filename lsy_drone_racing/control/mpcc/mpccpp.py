@@ -402,7 +402,6 @@ class MPCCpp(ControllerInterface):
         obstacle_slack_quad: float = 1e4,
         gate_soft: bool = True,
         gate_weight: float = 3*1e3,
-        warmstart_reset_on_replan: bool = False,
         n_obstacles: int | None = None,
     ):
         """Initialize the MPCC++ controller.
@@ -443,12 +442,11 @@ class MPCCpp(ControllerInterface):
                                 Raise to slow/tighten more at gates, lower to fly faster.
             gate_sigma:         Arc-length width (m) of that bump. Keep below ~half the
                                 gate spacing so bumps don't overlap and brake everywhere.
-            tunnel_mode:        Tunnel centerline source. "planner" (default) uses the
-                                planner's racing line as the centerline, so the tube
-                                follows the freshly planned (avoidance-aware) trajectory.
-                                "gate" anchors the centerline to the gate centers with
-                                tangents along the gate normals, so the tube/pinch sit ON
-                                the real gate openings (Krinner et al. Sec. IV-A).
+            tunnel_mode:        Tunnel centerline source. "gate" (default) anchors the
+                                centerline to the gate centers with tangents along the
+                                gate normals, so the tube/pinch sit ON the real gate
+                                openings (Krinner et al. Sec. IV-A). "planner" uses the
+                                planner's racing line as the centerline (legacy).
             gate_tangent_len:   Helper-knot offset delta (m) along each gate normal for
                                 the "gate" centerline; larger = straighter through-gate
                                 approach. Unused in "planner" mode.
@@ -464,15 +462,6 @@ class MPCCpp(ControllerInterface):
                                 the backup that keeps the drone off the physical
                                 frame if the soft tunnel is violated.
             gate_weight:        Weight of the soft gate-frame penalty.
-            warmstart_reset_on_replan:
-                                On a replan (replan_reference), how to treat the warm
-                                start. True (default): re-seed the primal guess along
-                                the freshly planned trajectory and push it into the
-                                solver -- "reset the warm start in the direction of the
-                                replan". False: leave the solver's retained (shifted)
-                                iterate as-is -- the vanilla warm start -- and only
-                                rebuild the reference / reset progress. Lets you A/B
-                                whether the aggressive reseed helps or hurts.
             n_obstacles:        OCP obstacle slots. Defaults to len(obs.pOLL_array).
         """
         super().__init__(obs, planner, info, config, t_total)
@@ -483,9 +472,6 @@ class MPCCpp(ControllerInterface):
         self._mu = float(mu)
         self._finished = False
         self._tick = 0
-        # Warm-start policy on replan: reset (reseed along the new plan) vs vanilla
-        # (keep the solver's retained iterate). See replan_reference / docstring.
-        self._warmstart_reset_on_replan = bool(warmstart_reset_on_replan)
 
         self._gates_information = {
             "total_length": 0.9, "total_height": 0.9,
@@ -850,15 +836,6 @@ class MPCCpp(ControllerInterface):
           2. reset progress theta to 0 -- the drone IS the new start,
           3. re-seed theta_pred and the warm start along the new centerline.
 
-        Steps 1-2 always run (the reparameterisation roots theta = 0 at the drone
-        on the NEW ref, so progress must reset regardless). Step 3's warm-start
-        SEED is gated by ``self._warmstart_reset_on_replan``:
-          - True  -> reset the primal guess along the freshly planned trajectory
-                     and push it into the solver ("reset in the direction of the
-                     replan").
-          - False -> keep the solver's retained (shifted) iterate untouched -- the
-                     vanilla warm start; only the reference and progress change.
-
         Call this only when the planner has actually replanned (e.g. on the
         pipeline's gate/obstacle-moved trigger), not every control step.
 
@@ -884,96 +861,24 @@ class MPCCpp(ControllerInterface):
         self._ref_gate_pos  = gate_pos.copy()
         self._ref_gate_quat = np.asarray(gate_quat, dtype=float).copy()
 
-        # theta resets to the start: the new centerline begins at the drone. This
-        # is a consequence of the arc-length reparameterisation (theta = 0 is the
-        # drone on the NEW ref), so it runs regardless of the warm-start policy.
+        # theta resets to the start: the new centerline begins at the drone.
         self._last_theta = 0.0
         self._finished   = False
         v_guess = float(np.clip(np.linalg.norm(obs.vBLL), 0.5, self._v_theta_max))
         self._theta_pred = np.clip(
             np.arange(self._N + 1) * self._dt * v_guess, 0.0, self._ref.length
         )
+        self._reinit_warmstart()
 
-        # --- warm-start policy (the flag) --------------------------------------
-        if not self._warmstart_reset_on_replan:
-            # VANILLA: leave _x_warm / _u_warm as the solver's retained (shifted)
-            # previous iterate. control() re-applies them on its next call, so the
-            # primal guess is untouched -- only the reference and progress changed.
-            print(
-                f"[MPCC++] Replan: reference rebuilt, warm start KEPT (vanilla); "
-                f"theta reset 0..{float(self._theta_pred[-1]):.2f} m."
-            )
-            return
+    def _reinit_warmstart(self) -> None:
+        """Re-seed _x_warm / _u_warm with hover states along the current centerline.
 
-        # RESET: seed the warm start along the DESIRED (planner) trajectory, not
-        # the gate-anchored tunnel centerline.
-        planner_pos = (np.asarray(trajectory.positions, dtype=float)
-                       if hasattr(trajectory, "positions") else None)
-        self._reinit_warmstart(v_guess, planner_pos)
-
-        # FORCE the new warm start into the solver NOW, overriding its retained
-        # internal iterate (the previous, stale solution). control() re-applies
-        # these on its next call too, but pushing them here makes the reset
-        # unconditional and immediate.
-        for k in range(self._N + 1):
-            self._solver.set(k, "x", self._x_warm[k])
-        for k in range(self._N):
-            self._solver.set(k, "u", self._u_warm[k])
-        src = "planner trajectory" if planner_pos is not None else "tunnel centerline"
-        print(f"[MPCC++] Warm start RESET from {src} "
-              f"(v_theta seed {v_guess:.2f} m/s, theta 0..{float(self._theta_pred[-1]):.2f} m, "
-              f"{self._N + 1} nodes).")
-
-    @staticmethod
-    def _sample_along(path: np.ndarray, arc_lengths) -> np.ndarray:
-        """Sample a dense polyline ``path`` (n,3) at the given cumulative arc
-        lengths, linearly interpolating between vertices (clamped to the ends).
-        Used to lay the warm start onto the planner's actual trajectory by arc
-        length, both paths being rooted at the current drone position."""
-        path = np.asarray(path, dtype=float)
-        seg = np.linalg.norm(np.diff(path, axis=0), axis=1)
-        s = np.concatenate([[0.0], np.cumsum(seg)])
-        total = float(s[-1])
-        out = np.empty((len(arc_lengths), 3))
-        for i, a in enumerate(arc_lengths):
-            a = float(np.clip(a, 0.0, total))
-            j = max(0, min(len(path) - 2, int(np.searchsorted(s, a) - 1)))
-            denom = s[j + 1] - s[j]
-            t = 0.0 if denom < 1e-9 else (a - s[j]) / denom
-            out[i] = path[j] + t * (path[j + 1] - path[j])
-        return out
-
-    def _reinit_warmstart(self, v_guess: float = 1.0,
-                          planner_pos: np.ndarray | None = None) -> None:
-        """Re-seed _x_warm / _u_warm along the NEW PLANNED (desired) trajectory.
-
-          - position x[0:3]: sampled from the planner's trajectory ``planner_pos``
-            by arc length theta_pred[k] -- the ACTUAL desired path (avoidance, frame
-            wraps and all). Falls back to the tunnel centerline self._ref.eval only
-            if no planner positions are supplied.
-          - velocity x[3:6]: zero (the SQP derives it).
-          - f_col/f_cmd: hover thrust; theta = theta_pred[k] (from _nominal_state).
-          - input v_theta = v_guess so the guessed progress still advances.
-
-        This is the fix for "the warm start never updates": the seed used to read
-        self._ref.eval, but in "gate" tunnel mode self._ref is a gate-anchored
-        centerline that ignores the planner's racing line, so the warm start looked
-        the same on every replan. Seeding from planner_pos makes it follow the
-        freshly planned trajectory.
+        Solver stage values are (re)applied from these caches at the next
+        control() call, which also pins node 0 to the measured state.
         """
-        if planner_pos is not None and len(np.asarray(planner_pos)) >= 2:
-            seed = self._sample_along(planner_pos, self._theta_pred)
-        else:
-            seed = np.array([self._ref.eval(float(t)) for t in self._theta_pred])
-        x_warm = []
-        for k in range(self._N + 1):
-            x_k = self._nominal_state(float(self._theta_pred[k]))  # hover thrust, theta
-            x_k[0:3] = seed[k]                                     # desired-trajectory position
-            x_warm.append(x_k)                                     # velocity x[3:6] stays 0
-        self._x_warm = x_warm
-        u_seed = np.zeros(self._nu)
-        u_seed[4] = v_guess                                        # v_theta: forward progress
-        self._u_warm = [u_seed.copy() for _ in range(self._N)]
+        self._x_warm = [self._nominal_state(float(self._theta_pred[k]))
+                        for k in range(self._N + 1)]
+        self._u_warm = [np.zeros(self._nu) for _ in range(self._N)]
 
     def reset(self) -> None:
         """Reset internal controller state for a new episode."""
