@@ -145,7 +145,91 @@ class SplinePlanner(Planner):
 
         p_WLL_array = self._avoidance_tree(p_WLL_array, pOLL_array, pGLL_array, y_GBL_array, t_elapsed)
 
+
+
+        p_WLL_array = self._avoid_negativ_z(p_WLL_array, t_elapsed)
+
         return p_WLL_array
+    
+    def _avoid_negativ_z(self,
+                        p_WLL_array: np.ndarray,
+                        t_elapsed: float,
+                        z_min: float = 0.0,
+                        z_target: float = 0.1
+                        ) -> np.ndarray:
+        """Iteratively add waypoints to keep the trajectory above z_min.
+        
+        Detects segments where the spline dips below z_min, then adds a lift
+        waypoint at each violation's midpoint (at z = z_target) to pull the
+        spline back up. Loops until no violations remain or max iterations hit.
+        
+        Args:
+            p_WLL_array:  Current waypoint list.
+            t_elapsed:    Current race time.
+            z_min:        Minimum allowed z. Below this counts as a violation.
+            z_target:     z-coordinate to place the lift waypoint at. Should be
+                        comfortably above z_min so the spline doesn't dip back
+                        after being lifted.
+        
+        Returns:
+            Waypoint list with lift waypoints inserted.
+        """
+        wps = p_WLL_array.copy()
+        
+        for outer_iter in range(_MAX_AVOID_ITER):
+            # Build spline and sample densely
+            #breakpoint()
+            spline, t_sample = self._create_spline(wps, t_elapsed)
+            
+            t_dense = np.linspace(0, t_sample[-1], len(t_sample) * 4)
+            pts = spline(t_dense)
+            seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+            cum = np.concatenate([[0.0], np.cumsum(seg)])
+            
+            # Get the existing waypoints' arc-lengths (for the reinsertion)
+            t_knots = spline.x
+            kept_wps = spline(t_knots)
+            s_wp = np.interp(t_knots, t_dense, cum)
+            
+            # Find all violation segments (contiguous runs of z < z_min)
+            detours = []
+            inside_low = False
+            entry_i = None
+            
+            for i, p in enumerate(pts):
+                if p[2] < z_min:
+                    if not inside_low:
+                        inside_low = True
+                        entry_i = i
+                    continue
+                if inside_low:
+                    inside_low = False
+                    # Build lift waypoint at midpoint of the violation
+                    mid_idx = (entry_i + i) // 2
+                    p_mid = pts[mid_idx]
+                    new_wp = np.array([p_mid[0], p_mid[1], z_target])
+                    s_detour = 0.5 * (cum[entry_i] + cum[i])
+                    detours.append((s_detour, new_wp))
+            
+            # If trajectory ends still below z_min, close the last segment
+            if inside_low:
+                mid_idx = (entry_i + len(pts) - 1) // 2
+                p_mid = pts[mid_idx]
+                new_wp = np.array([p_mid[0], p_mid[1], z_target])
+                s_detour = 0.5 * (cum[entry_i] + cum[-1])
+                detours.append((s_detour, new_wp))
+            
+            if not detours:
+                print(f"[avoid neg z] no z violations after {outer_iter} iter(s)")
+                return wps
+            
+            # Merge existing waypoints and detours, sort by arc-length
+            items = [(s_wp[k], kept_wps[k]) for k in range(len(t_knots))] + detours
+            items.sort(key=lambda it: it[0])
+            wps = np.array([pt for _, pt in items])
+        
+        print(f"[avoid neg z] hit max iterations ({_MAX_AVOID_ITER})")
+        return wps
 
     def _avoidance_tree(
             self,
