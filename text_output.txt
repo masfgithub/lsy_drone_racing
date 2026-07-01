@@ -1,0 +1,312 @@
+s/deploy/lib/python3.12/multiprocessing/connection.py", line 440, in _poll
+    r = wait([self], timeout)
+        ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/connection.py", line 1136, in wait
+    ready = selector.select(timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/selectors.py", line 415, in select
+    fd_event_list = self._selector.poll(timeout)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/scripts/deploy.py", line 71, in main
+    time.sleep(1 / config.env.freq - dt)
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/scripts/deploy.py", line 87, in <module>
+    fire.Fire(main)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/fire/core.py", line 135, in Fire
+    component_trace = _Fire(component, args, parsed_flag_args, context, name)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/fire/core.py", line 468, in _Fire
+    component, remaining_args = _CallAndUpdateTrace(
+                                ^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/fire/core.py", line 684, in _CallAndUpdateTrace
+    component = fn(*varargs, **kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/scripts/deploy.py", line 79, in main
+    env.close()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/gymnasium/core.py", line 341, in close
+    return self.env.close()
+           ^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/lsy_drone_racing/envs/real_race_env.py", line 456, in close
+    self._return_to_start()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/lsy_drone_racing/envs/real_race_env.py", line 422, in _return_to_start
+    wait_for_action(BREAKING_DURATION)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/lsy_drone_racing/envs/real_race_env.py", line 410, in wait_for_action
+    raise RuntimeError("ROS has already stopped")
+RuntimeError: ROS has already stopped
+(lsy_drone_racing:deploy) michael_tobias_adr@tueilsy-st-14:~/Desktop/ADR/lsy_drone_racing$ python scripts/deploy.py --config final.toml
+W0701 18:02:42.985758 1575849 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0701 18:02:42.988064 1575589 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+^CTraceback (most recent call last):
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/scripts/deploy.py", line 87, in <module>
+Process SpawnProcess-2:
+Process SpawnProcess-1:
+    fire.Fire(main)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/fire/core.py", line 135, in Fire
+    component_trace = _Fire(component, args, parsed_flag_args, context, name)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/fire/core.py", line 468, in _Fire
+    component, remaining_args = _CallAndUpdateTrace(
+                                ^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/fire/core.py", line 684, in _CallAndUpdateTrace
+    component = fn(*varargs, **kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/scripts/deploy.py", line 41, in main
+    env: RealDroneRaceEnv = gymnasium.make(
+                            ^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/gymnasium/envs/registration.py", line 734, in make
+    env = env_creator(**env_spec_kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/lsy_drone_racing/envs/real_race_env.py", line 529, in __init__
+    super().__init__(
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/lsy_drone_racing/envs/real_race_env.py", line 128, in __init__
+    self._ros_connector = ROSConnector(
+                          ^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/drone_estimators/ros_nodes/ros2_connector.py", line 169, in __init__
+    time.sleep(0.01)  # Processes are spinning, so we can sleep here
+    ^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/drone_estimators/ros_nodes/ros2_connector.py", line 375, in command_publisher
+    cmd = queue.get(timeout=0.1)  # Get the latest message from the queue. Block if empty
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/queues.py", line 113, in get
+    if not self._poll(timeout):
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/connection.py", line 257, in poll
+    return self._poll(timeout)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/connection.py", line 440, in _poll
+    r = wait([self], timeout)
+        ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/connection.py", line 1136, in wait
+    ready = selector.select(timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/selectors.py", line 415, in select
+    fd_event_list = self._selector.poll(timeout)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/drone_estimators/ros_nodes/ros2_connector.py", line 354, in estimate_update
+    rclpy.spin_once(node, timeout_sec=0.1)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/__init__.py", line 303, in spin_once
+    executor.spin_once(timeout_sec=timeout_sec)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/executors.py", line 934, in spin_once
+    self._spin_once_impl(timeout_sec)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/executors.py", line 917, in _spin_once_impl
+    handler, entity, node = self.wait_for_ready_callbacks(
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/executors.py", line 887, in wait_for_ready_callbacks
+    return next(self._cb_iter)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/executors.py", line 789, in _wait_for_ready_callbacks
+    wait_set.wait(timeout_nsec)
+KeyboardInterrupt
+
+(lsy_drone_racing:deploy) michael_tobias_adr@tueilsy-st-14:~/Desktop/ADR/lsy_drone_racing$ python scripts/deploy.py --config final.toml
+W0701 18:03:03.139564 1576845 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0701 18:03:03.141624 1576652 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/jax/_src/compiler.py:834: UserWarning: Error writing persistent compilation cache entry for 'jit_gate_passed': PermissionError: [Errno 13] Permission denied: '/tmp/jax_cache/jit_gate_passed-155eab0b1fe2813c3023a99c71c71ff845c10aef695bbf73737c89ecb2957a9f-cache'
+  warnings.warn(
+INFO:lsy_drone_racing.envs.real_race_env:Waiting for drone 52 to connect...
+INFO:lsy_drone_racing.envs.real_race_env:Drone 52 connected to radio://0/80/2M/E7E7E7E734
+[MPCC++] Replanned -> tube + theta reset
+WARNING:__main__:Controller execution time exceeded loop frequency by 0.016s.
+[MPCC++] Replanned -> tube + theta reset
+WARNING:__main__:Controller execution time exceeded loop frequency by 0.015s.
+[MPCC++] Replanned -> tube + theta reset
+WARNING:__main__:Controller execution time exceeded loop frequency by 0.019s.
+^CProcess SpawnProcess-2:
+Process SpawnProcess-1:
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/drone_estimators/ros_nodes/ros2_connector.py", line 375, in command_publisher
+    cmd = queue.get(timeout=0.1)  # Get the latest message from the queue. Block if empty
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/queues.py", line 113, in get
+    if not self._poll(timeout):
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/connection.py", line 257, in poll
+    return self._poll(timeout)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/connection.py", line 440, in _poll
+    r = wait([self], timeout)
+        ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/connection.py", line 1136, in wait
+    ready = selector.select(timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/selectors.py", line 415, in select
+    fd_event_list = self._selector.poll(timeout)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/drone_estimators/ros_nodes/ros2_connector.py", line 354, in estimate_update
+    rclpy.spin_once(node, timeout_sec=0.1)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/__init__.py", line 303, in spin_once
+    executor.spin_once(timeout_sec=timeout_sec)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/executors.py", line 934, in spin_once
+    self._spin_once_impl(timeout_sec)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/executors.py", line 917, in _spin_once_impl
+    handler, entity, node = self.wait_for_ready_callbacks(
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/executors.py", line 887, in wait_for_ready_callbacks
+    return next(self._cb_iter)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/executors.py", line 789, in _wait_for_ready_callbacks
+    wait_set.wait(timeout_nsec)
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/scripts/deploy.py", line 71, in main
+    time.sleep(1 / config.env.freq - dt)
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/scripts/deploy.py", line 87, in <module>
+    fire.Fire(main)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/fire/core.py", line 135, in Fire
+    component_trace = _Fire(component, args, parsed_flag_args, context, name)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/fire/core.py", line 468, in _Fire
+    component, remaining_args = _CallAndUpdateTrace(
+                                ^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/fire/core.py", line 684, in _CallAndUpdateTrace
+    component = fn(*varargs, **kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/scripts/deploy.py", line 79, in main
+    env.close()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/gymnasium/core.py", line 341, in close
+    return self.env.close()
+           ^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/lsy_drone_racing/envs/real_race_env.py", line 456, in close
+    self._return_to_start()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/lsy_drone_racing/envs/real_race_env.py", line 422, in _return_to_start
+    wait_for_action(BREAKING_DURATION)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/lsy_drone_racing/envs/real_race_env.py", line 410, in wait_for_action
+    raise RuntimeError("ROS has already stopped")
+RuntimeError: ROS has already stopped
+(lsy_drone_racing:deploy) michael_tobias_adr@tueilsy-st-14:~/Desktop/ADR/lsy_drone_racing$ python scripts/deploy.py --config final.toml
+W0701 18:04:19.666726 1578895 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0701 18:04:19.668892 1578790 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/jax/_src/compiler.py:834: UserWarning: Error writing persistent compilation cache entry for 'jit_gate_passed': PermissionError: [Errno 13] Permission denied: '/tmp/jax_cache/jit_gate_passed-155eab0b1fe2813c3023a99c71c71ff845c10aef695bbf73737c89ecb2957a9f-cache'
+  warnings.warn(
+INFO:lsy_drone_racing.envs.real_race_env:Waiting for drone 52 to connect...
+INFO:lsy_drone_racing.envs.real_race_env:Drone 52 connected to radio://0/80/2M/E7E7E7E734
+[MPCC++] Replanned -> tube + theta reset
+WARNING:__main__:Controller execution time exceeded loop frequency by 0.036s.
+[MPCC++] Replanned -> tube + theta reset
+WARNING:__main__:Controller execution time exceeded loop frequency by 0.021s.
+^CProcess SpawnProcess-2:
+Process SpawnProcess-1:
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/drone_estimators/ros_nodes/ros2_connector.py", line 354, in estimate_update
+    rclpy.spin_once(node, timeout_sec=0.1)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/__init__.py", line 303, in spin_once
+    executor.spin_once(timeout_sec=timeout_sec)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/executors.py", line 934, in spin_once
+    self._spin_once_impl(timeout_sec)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/executors.py", line 917, in _spin_once_impl
+    handler, entity, node = self.wait_for_ready_callbacks(
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/executors.py", line 887, in wait_for_ready_callbacks
+    return next(self._cb_iter)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/rclpy/executors.py", line 789, in _wait_for_ready_callbacks
+    wait_set.wait(timeout_nsec)
+KeyboardInterrupt
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/drone_estimators/ros_nodes/ros2_connector.py", line 375, in command_publisher
+    cmd = queue.get(timeout=0.1)  # Get the latest message from the queue. Block if empty
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/queues.py", line 113, in get
+    if not self._poll(timeout):
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/connection.py", line 257, in poll
+    return self._poll(timeout)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/connection.py", line 440, in _poll
+    r = wait([self], timeout)
+        ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/multiprocessing/connection.py", line 1136, in wait
+    ready = selector.select(timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/selectors.py", line 415, in select
+    fd_event_list = self._selector.poll(timeout)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+^CTraceback (most recent call last):
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/scripts/deploy.py", line 71, in main
+    time.sleep(1 / config.env.freq - dt)
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/lsy_drone_racing/envs/real_race_env.py", line 456, in close
+    self._return_to_start()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/lsy_drone_racing/envs/real_race_env.py", line 422, in _return_to_start
+    wait_for_action(BREAKING_DURATION)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/lsy_drone_racing/envs/real_race_env.py", line 410, in wait_for_action
+    raise RuntimeError("ROS has already stopped")
+RuntimeError: ROS has already stopped
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/scripts/deploy.py", line 87, in <module>
+    fire.Fire(main)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/fire/core.py", line 135, in Fire
+    component_trace = _Fire(component, args, parsed_flag_args, context, name)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/fire/core.py", line 468, in _Fire
+    component, remaining_args = _CallAndUpdateTrace(
+                                ^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/fire/core.py", line 684, in _CallAndUpdateTrace
+    component = fn(*varargs, **kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/scripts/deploy.py", line 79, in main
+    env.close()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/gymnasium/core.py", line 341, in close
+    return self.env.close()
+           ^^^^^^^^^^^^^^^^
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/lsy_drone_racing/envs/real_race_env.py", line 465, in close
+    self.drone.close_link()
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/site-packages/cflib/crazyflie/__init__.py", line 291, in close_link
+    self.incoming.join(timeout=1)
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/threading.py", line 1153, in join
+    self._wait_for_tstate_lock(timeout=max(timeout, 0))
+  File "/home/michael_tobias_adr/Desktop/ADR/lsy_drone_racing/.pixi/envs/deploy/lib/python3.12/threading.py", line 1169, in _wait_for_tstate_lock
+    if lock.acquire(block, timeout):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+^C^C^C^C^C^C
+(lsy_drone_racing:deploy) michael_tobias_adr@tueilsy-st-14:~/Desktop/ADR/lsy_drone_racing$ 

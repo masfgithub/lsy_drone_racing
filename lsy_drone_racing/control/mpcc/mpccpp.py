@@ -314,7 +314,7 @@ class MPCCpp(ControllerInterface):
         info: dict,
         config: dict,
         t_total: int,
-        N_horizon: int = 20,
+        N_horizon: int = 40,
         T_horizon: float = 0.5,
         mu: float = 12.0,
         q_lag: float = 80.0,
