@@ -105,7 +105,14 @@ class Planner(ABC):
         y_GBL_array = R.from_quat(qTLT[pTLL_index:]).as_euler('ZYX')[:, 0]
 
         # Centre position of gate frames
-        pGLL_array = obs.pTLL_array[pTLL_index:]
+        if pTLL_index + 2 > 4:
+            pGLL_array = obs.pTLL_array[pTLL_index:]
+            # ADD THIS: Slice the yaw array exactly the same way!
+            y_GBL_array = y_GBL_array[pTLL_index:] 
+        else:
+            pGLL_array = obs.pTLL_array[pTLL_index:pTLL_index + 2]
+            # ADD THIS: Slice the yaw array exactly the same way!
+            y_GBL_array = y_GBL_array[pTLL_index:pTLL_index + 2]
 
         return pGLL_array, y_GBL_array
     
