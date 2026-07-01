@@ -789,13 +789,31 @@ class SplinePlanner(Planner):
         if len(pGLL_array) == 0:
             return None, None, None, None
         
-        # Compute the arc-length where each gate is threaded by the trajectory.
-        # This is the spline sample closest to the gate center.
         gate_arclens = []
-        for gc in pGLL_array:
+        gate_flight_normals = []
+        for gc, gy in zip(pGLL_array, y_GBL_array):
             dists = np.linalg.norm(pts - gc, axis=1)
-            gate_arclens.append(cum[int(np.argmin(dists))])
+            idx = int(np.argmin(dists))
+            gate_arclens.append(cum[idx])
+            
+            # Get spline tangent at the gate crossing
+            if 0 < idx < len(pts) - 1:
+                tangent = pts[idx + 1] - pts[idx - 1]
+            elif idx > 0:
+                tangent = pts[idx] - pts[idx - 1]
+            else:
+                tangent = pts[idx + 1] - pts[idx]
+            tangent = tangent / (np.linalg.norm(tangent) + 1e-9)
+            
+            # Gate normal from yaw
+            normal = np.array([np.cos(gy), np.sin(gy), 0.0])
+            # Align with flight direction
+            if np.dot(normal, tangent) < 0:
+                normal = -normal
+            gate_flight_normals.append(normal)
+        
         gate_arclens = np.array(gate_arclens)
+        gate_flight_normals = np.array(gate_flight_normals)
         
         inside = False
         entry_i = None
@@ -806,14 +824,21 @@ class SplinePlanner(Planner):
             hit, gate_c, gate_yaw = self._check_gate3(p, pGLL_array, y_GBL_array)
             if hit:
                 if skip_approach:
-                    # Identify which gate was hit
+                        # Identify which gate was hit
                     d_to_gates = np.linalg.norm(pGLL_array - gate_c, axis=1)
                     hit_gate_idx = int(np.argmin(d_to_gates))
                     s_hit_gate = gate_arclens[hit_gate_idx]
+                    flight_normal = gate_flight_normals[hit_gate_idx]
                     
-                    # If we're BEFORE the gate threading arc-length, it's approach-side
-                    if cum[i] < s_hit_gate:
-                        continue   # Skip the approach grazing
+                    # Check 1: violation is before the gate in arc-length
+                    is_before_gate = cum[i] < s_hit_gate
+                    
+                    # Check 2: violation is behind the gate plane in flight direction
+                    side_dot = np.dot(p - gate_c, flight_normal)
+                    is_behind_plane = side_dot < 0
+                    
+                    if is_before_gate and is_behind_plane:
+                        continue   # Approach-side grazing — skip
                 
                 if not inside:
                     inside = True
