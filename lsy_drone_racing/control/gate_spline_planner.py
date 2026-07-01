@@ -72,7 +72,7 @@ FRAME_WRAP_SPACING = 0.30
 # spline / obstacles 3D figure once at simulation start, via plot_plan() (defined
 # at the bottom of this module). It is a blocking window -- close it to let the sim
 # run. Set False to disable the feature entirely.
-SHOW_PLAN_PLOT = True
+SHOW_PLAN_PLOT = False
 
 # Debug: when True, plan() prints the full obs state (paste-ready) whenever a real
 # violation survives planning -- a residual obstacle hit, or more than a trivial
@@ -86,6 +86,20 @@ DUMP_VIOLATION_STATE = True
 # (centre - this * normal), so it leaves on the exit side and aims at the approach
 # side instead of cutting straight centre-to-centre. Tune here.
 DETOUR_GATE_OFFSET = 0.20
+
+
+# Turnaround handling. When the drone starts on the EXIT side of the gate it is
+# heading for, it must reverse to thread from the approach side; a plain spline
+# does that by ringing back and forth through the gate plane (clipping the frame,
+# thrashing the wrap). We detect it and route the reversal AROUND the frame.
+#  - TURN_DEPTH: signed depth (m, along +normal) past which the drone counts as
+#    "on the exit side" and a turnaround is considered. Above the frame's exit
+#    face (thickness/2 = 0.175) so we only trigger once the drone is genuinely past.
+#  - TURN_MIN_REVERSALS: how many times the base spline must reverse through the
+#    gate plane (inside the outer extent) to confirm a real oscillation -- a wide
+#    clean arc has none, so this avoids placing a turnaround when one isn't needed.
+TURN_DEPTH = 0.30
+TURN_MIN_REVERSALS = 2
 
 
 class GateCenterSplinePlanner(Planner):
@@ -102,8 +116,8 @@ class GateCenterSplinePlanner(Planner):
         attitude_offset: float = 0.05,
         lead_speed_eps: float = 0.1,
         gate_thickness: float = 0.35,
-        gate_hole_half: float = 0.115,
-        gate_outer_half: float = 0.40,
+        gate_hole_half: float = 0.09,
+        gate_outer_half: float = 0.45,
         frame_margin: float = 0.05,
         drone_radius: float = 0.0,
         thread_gates: bool = True,
@@ -169,12 +183,15 @@ class GateCenterSplinePlanner(Planner):
         self._drone_radius = float(drone_radius)
         self._thread_gates = bool(thread_gates)
         self._frame_keepout = bool(frame_keepout)
-        # Option A: approach/exit straddle the centre, +/- half thread_separation
-        # along the normal. The depth slab (Option C clip detection) stays tied to
-        # the real frame thickness -- it is the physical frame depth, independent
-        # of how far apart the approach/exit waypoints are placed.
-        self._thread_offset = 0.5 * float(thread_separation)
+        # Approach/exit straddle the centre along the normal. They MUST sit BEYOND
+        # the frame depth (thickness/2 + margin) so the spline crosses the frame on a
+        # straight, normal-aligned run; thread_separation adds extra runway on top.
+        # A small offset puts the approach/exit *inside* the frame depth, so the
+        # through-gate segment bows laterally into a bar -- the cause of single-pass
+        # "thread bow" frame violations on the gate being approached (these are NOT
+        # re-crossings, so the wrap cannot fix them; a clean approach is the fix).
         self._depth_slab_half = 0.5 * self._gate_thickness + self._frame_margin
+        self._thread_offset = self._depth_slab_half + 0.5 * float(thread_separation)
         self._safe_hole_half = max(
             0.01, self._gate_hole_half - self._frame_margin - self._drone_radius
         )
@@ -187,6 +204,7 @@ class GateCenterSplinePlanner(Planner):
         # Previous plan's chosen wrap side per gate (keyed by rounded centre), used
         # for replan stability: a side (left/right) migrates to TOP next time.
         self._prev_wrap_side: dict[tuple, str] = {}
+        self._turn_log: list = []        # turnaround arcs placed this plan (diagnostics)
         self._gate_centers: np.ndarray | None = None
         self._gate_rot: np.ndarray | None = None
         # Passed gates (index < pTLL_index): no longer threaded, but still physical
@@ -210,6 +228,7 @@ class GateCenterSplinePlanner(Planner):
                                             include_attitude=include_attitude)
         obstacles = np.asarray(getattr(obs, "pOLL_array", np.zeros((0, 3))),
                                dtype=float)
+        wps, labels = self._avoid_turnaround(obs, wps, labels, t_elapsed)
         wps, labels = self._avoid(wps, labels, obstacles, t_elapsed)
         wps, labels = self._avoid_frame_recrossings(wps, labels, obstacles, t_elapsed)
         spline, t_sample = self._create_spline(wps, t_elapsed)
@@ -226,6 +245,7 @@ class GateCenterSplinePlanner(Planner):
             "obstacles": obstacles,
             "avoid_log": list(self._avoid_log),
             "frame_log": list(self._frame_log),
+            "turn_log": list(self._turn_log),
         }
 
     @staticmethod
@@ -256,6 +276,7 @@ class GateCenterSplinePlanner(Planner):
         # Commit the chosen pass (restore its avoid/frame logs for the diagnostics).
         self._avoid_log = best["avoid_log"]
         self._frame_log = best["frame_log"]
+        self._turn_log = best["turn_log"]
         # Remember this plan's wrap side per gate so the NEXT replan can prefer the
         # stable (TOP) option instead of flip-flopping left<->right.
         self._prev_wrap_side = {d["key"]: d["side"] for d in best["frame_log"]
@@ -623,9 +644,116 @@ class GateCenterSplinePlanner(Planner):
                 count += 1
         return count
 
+    def _avoid_turnaround(self, obs, wps, labels, t_elapsed):
+        """Route a turnaround AROUND the target gate's frame instead of through it.
+
+        When the drone starts on the EXIT side of the gate it is heading for, it has
+        to reverse to thread from the approach side. A plain spline does that by
+        cutting back across the gate plane -- it rings through the hole (several
+        depth reversals inside the outer extent), clipping the frame and making the
+        reactive wrap thrash one crossing at a time. Here we catch it up front and
+        insert ONE wrap-style arc at the target gate: exit-side -> beside/over the
+        frame -> approach-side, so the reversal happens in free space and the
+        approach is clean.
+
+        Trigger requires BOTH (so we never place a turnaround that isn't needed):
+          - the drone sits past the gate's exit face (signed depth > TURN_DEPTH), and
+          - the base spline actually oscillates through the plane inside the outer
+            extent (>= TURN_MIN_REVERSALS depth reversals there).
+
+        Placement reuses the wrap's side conventions: radius outer_half +
+        FRAME_WRAP_CLEARANCE, depth +/- FRAME_WRAP_SPACING along the normal (the two
+        outer arc points straddle the frame), side chosen TOP-first then a feasible
+        side (keeping the previous side for replan stability), TOP as the always-
+        available fallback. The arc is inserted just before the target gate's
+        approach waypoint and labelled "turn".
+        """
+        self._turn_log = []
+        wps = [np.asarray(w, dtype=float) for w in wps]
+        labels = list(labels)
+        if (not self._frame_keepout or self._gate_centers is None
+                or len(self._gate_centers) == 0 or "approach" not in labels):
+            return np.asarray(wps), labels
+
+        c = np.asarray(self._gate_centers[0], dtype=float)     # target = first threaded
+        Rg = np.asarray(self._gate_rot[0], dtype=float)
+        normal = Rg[:, 0] / (np.linalg.norm(Rg[:, 0]) + 1e-12)
+        drone = np.asarray(obs.pBLL, dtype=float)
+        if float((drone - c) @ normal) <= TURN_DEPTH:          # not on the exit side
+            return np.asarray(wps), labels
+
+        # Confirm the base path oscillates through the plane inside the outer extent.
+        spline, t_sample = self._create_spline(np.asarray(wps), t_elapsed)
+        pos = spline(t_sample)
+        L = (pos - c) @ Rg
+        x = L[:, 0]
+        lat = np.maximum(np.abs(L[:, 1]), np.abs(L[:, 2]))
+        near = lat <= self._gate_outer_half
+        dx = np.diff(x)
+        rev = (np.sign(dx[:-1]) != np.sign(dx[1:])) & near[1:-1]
+        if int(rev.sum()) < TURN_MIN_REVERSALS:                # no real oscillation
+            return np.asarray(wps), labels
+
+        # Side axes / placement (same conventions as the wrap).
+        yaxis, zaxis = Rg[:, 1], Rg[:, 2]
+        side_ax = yaxis if abs(yaxis[2]) <= abs(zaxis[2]) else zaxis
+        side_ax = np.array([side_ax[0], side_ax[1], 0.0])
+        sn = np.linalg.norm(side_ax)
+        side_ax = side_ax / sn if sn > 1e-9 else np.array([1.0, 0.0, 0.0])
+        up = np.array([0.0, 0.0, 1.0])
+        R = self._gate_outer_half + FRAME_WRAP_CLEARANCE
+        D = FRAME_WRAP_SPACING
+        offsets = {"left": -R * side_ax, "right": R * side_ax, "top": R * up}
+
+        # arc: exit-side (drone comes from +normal) -> beside -> approach-side (-normal)
+        def arc_for(o):
+            return [c + D * normal + o, c + o, c - D * normal + o]
+
+        ins = labels.index("approach")
+        obstacles = np.asarray(getattr(obs, "pOLL_array", np.zeros((0, 3))), dtype=float)
+        obs_xy = obstacles[:, :2] if obstacles.size else np.zeros((0, 2))
+        fh, oh, hw = 0.5 * self._gate_thickness, self._gate_outer_half, self._gate_hole_half
+
+        def evaluate(o):
+            cwps = wps[:ins] + arc_for(o) + wps[ins:]
+            cs, ct = self._create_spline(np.asarray(cwps), t_elapsed)
+            cp = cs(ct)
+            loc = np.abs((cp - c) @ Rg)
+            l2 = np.maximum(loc[:, 1], loc[:, 2])
+            clip = int(np.sum((loc[:, 0] <= fh) & (l2 > hw) & (l2 <= oh)))
+            obst = (self._count_violations(cp[:, :2], obs_xy, self._obstacle_d_min)
+                    if obs_xy.size else 0)
+            return {"wps": cwps, "this_clip": clip, "obst": obst,
+                    "length": self._path_length(cp), "curv": self._path_curvature(cp)}
+
+        evals = {s: evaluate(o) for s, o in offsets.items()}
+        key = self._gate_key(c)
+        prev = self._prev_wrap_side.get(key)
+        feasible = [s for s in ("top", "left", "right")
+                    if evals[s]["obst"] == 0 and evals[s]["this_clip"] == 0]
+        if "top" in feasible:
+            chosen = "top"
+        elif feasible:
+            chosen = prev if prev in feasible else min(
+                feasible, key=lambda s: (round(evals[s]["length"], 3),
+                                         round(evals[s]["curv"], 3)))
+        else:
+            chosen = "top"
+        wps = evals[chosen]["wps"]
+        labels = labels[:ins] + ["turn"] * 3 + labels[ins:]
+        self._turn_log.append({
+            "gate": 0, "key": key, "side": chosen,
+            "drone_depth": round(float((drone - c) @ normal), 3),
+            "reversals": int(rev.sum()), "feasible": feasible,
+            "obst": {s: evals[s]["obst"] for s in evals},
+        })
+        return np.asarray(wps), labels
+
     def _avoid_frame_recrossings(self, wps, labels, obstacles, t_elapsed):
-        """Wrap the path around any gate frame it collides with, choosing among
-        three placements of the 3-waypoint arc:
+        """Wrap the path around any gate frame it collides with, in TWO passes.
+
+        Both passes place the same 3-waypoint arc (built by ``_wrap_candidates``),
+        choosing among three placements:
 
             LEFT / RIGHT -- offset horizontally to +/- the gate's side axis, at the
                             gate centre's HEIGHT;
@@ -634,20 +762,27 @@ class GateCenterSplinePlanner(Planner):
 
         All three sit at radius R = outer_half + FRAME_WRAP_CLEARANCE and share the
         same entry / middle / exit structure (D = FRAME_WRAP_SPACING along the normal
-        for entry/exit). Each is re-splined and scored, and one is chosen so that:
+        for entry/exit), with TOP preferred and a feasible side as the fallback.
 
-          - TOP is PREFERRED and used whenever it is FEASIBLE (clears this gate's
-            frame material and hits no obstacle);
-          - LEFT / RIGHT are FALLBACKS, used only when TOP is not feasible. Between
-            two feasible sides the previously chosen side is kept (replan stability);
-            otherwise the quicker/smoother side wins (shortest path, then least
-            curvature);
-          - if none is feasible the least-clipping placement is kept (TOP breaks
-            ties) and the greedy loop re-splines and tries again.
+        Pass 1 -- RE-CROSSINGS (``_worst_recrossing``): each gate is threaded once;
+        every extra plane crossing (or a passed gate's material crossing) is wrapped.
+        If no placement is feasible, TOP is used anyway and the greedy loop retries.
+
+        Pass 2 -- RESIDUAL FRAME MATERIAL (``_worst_frame_material``): wraps any
+        sample still sitting in frame material that Pass 1 could not see because the
+        path never crosses the gate plane there -- a same-side dip, where the spline
+        bulges into a bar and returns on the same side. This is the "apply avoidance
+        on ANY frame violation" step. To stay safe it applies a wrap ONLY when it adds
+        no obstacle hit, STRICTLY reduces the total frame-material sample count over
+        all gates, and (for a threaded gate) still threads the hole -- otherwise it
+        leaves the sample as a residual rather than clearing a must-fly gate by
+        skipping it. If no placement qualifies it stops.
 
         Previous sides are remembered per gate (keyed by rounded centre) in
         ``self._prev_wrap_side`` and committed by plan(). Threaded AND passed gates
-        are handled. Greedy: fix the worst collision, re-spline, repeat.
+        are handled. Both passes are greedy: fix the worst collision, re-spline,
+        repeat. Each ``_frame_log`` entry carries a ``driver`` of "recross" or
+        "material" so the two are distinguishable in diagnostics.
         """
         self._frame_log = []
         wps = [np.asarray(w, dtype=float) for w in wps]
@@ -658,9 +793,12 @@ class GateCenterSplinePlanner(Planner):
         obstacles = np.asarray(obstacles, dtype=float)
         obs_xy = obstacles[:, :2] if obstacles.size else np.zeros((0, 2))
         R = self._gate_outer_half + FRAME_WRAP_CLEARANCE     # radius past the frame
-        D = FRAME_WRAP_SPACING                                # depth between wrap points
         frame_gates = self._frame_gates()                    # threaded + passed gates
 
+        # Pass 1 -- RE-CROSSINGS. Each gate is threaded once; every extra plane
+        # crossing (or a passed gate's material crossing) is wrapped. Greedy: worst
+        # first, re-spline, repeat. TOP is preferred, a feasible side is the fallback,
+        # TOP again if none is feasible (always geometrically available).
         for _ in range(self._max_avoid_iters):
             spline, t_sample = self._create_spline(np.asarray(wps), t_elapsed)
             pos = spline(t_sample)
@@ -668,80 +806,79 @@ class GateCenterSplinePlanner(Planner):
             if hit is None:
                 break
             gi, k = hit
-            c, Rg, threaded = frame_gates[gi]
-            normal = Rg[:, 0] / (np.linalg.norm(Rg[:, 0]) + 1e-12)
-            yaxis, zaxis = Rg[:, 1], Rg[:, 2]
-            # Horizontal "side" axis for LEFT/RIGHT: the in-plane axis closest to
-            # horizontal, flattened to z = 0 so left/right stay at the centre height.
-            side_ax = yaxis if abs(yaxis[2]) <= abs(zaxis[2]) else zaxis
-            side_ax = np.array([side_ax[0], side_ax[1], 0.0])
-            sn = np.linalg.norm(side_ax)
-            side_ax = side_ax / sn if sn > 1e-9 else np.array([1.0, 0.0, 0.0])
-            up = np.array([0.0, 0.0, 1.0])
-            # left/right at centre height; top straight up (middle point above centre)
-            offsets = {"left": -R * side_ax, "right": R * side_ax, "top": R * up}
-
-            # entry/exit side along the normal (a couple of samples either side of the
-            # crossing avoid the near-zero ambiguity)
-            n = len(pos)
-            x_in = float((pos[max(0, k - 2)] - c) @ normal)
-            x_out = float((pos[min(n - 1, k + 2)] - c) @ normal)
-            s_in = 1.0 if x_in >= 0.0 else -1.0
-            s_out = -s_in if (x_out >= 0.0) == (x_in >= 0.0) else (1.0 if x_out >= 0.0 else -1.0)
-            ins = self._insertion_index(wps, pos[k])
-
-            def arc_for(o: np.ndarray) -> list:
-                return [c + s_in * D * normal + o, c + o, c + s_out * D * normal + o]
-
-            fh2, oh2, hw2 = 0.5 * self._gate_thickness, self._gate_outer_half, self._gate_hole_half
-
-            def clips_this(cp: np.ndarray) -> int:
-                # number of samples of cp inside THIS gate's frame MATERIAL. Strict:
-                # inside the half-thickness and laterally between the hole and outer
-                # edges. Threading through the open hole (lateral <= hole_half) is not
-                # counted. A count (not a 0/1 flag) lets the least-bad fallback pick
-                # the placement that clips least, so the greedy loop converges.
-                loc = np.abs((cp - c) @ Rg)
-                lat = np.maximum(loc[:, 1], loc[:, 2])
-                return int(np.sum((loc[:, 0] <= fh2) & (lat > hw2) & (lat <= oh2)))
-
-            evals = {}
-            for s, o in offsets.items():
-                cwps = wps[:ins] + arc_for(o) + wps[ins:]
-                cspline, ct = self._create_spline(np.asarray(cwps), t_elapsed)
-                cp = cspline(ct)
-                evals[s] = {
-                    "wps": cwps,
-                    "obst": (self._count_violations(cp[:, :2], obs_xy, self._obstacle_d_min)
-                             if obs_xy.size else 0),
-                    "this_clip": clips_this(cp),
-                    "frame": self._frame_clips(cp),
-                    "length": self._path_length(cp),
-                    "curv": self._path_curvature(cp),
-                }
-
-            key = self._gate_key(c)
+            gate = frame_gates[gi]
+            evals, red_labels, ins, ndrop = self._wrap_candidates(
+                wps, labels, pos, k, gate, obs_xy, t_elapsed)
+            key = self._gate_key(gate[0])
             prev = self._prev_wrap_side.get(key)
             feasible = [s for s in ("top", "left", "right")
                         if evals[s]["obst"] == 0 and evals[s]["this_clip"] == 0]
             if "top" in feasible:
                 chosen = "top"                                        # always prefer TOP
             elif feasible:                                            # TOP infeasible: use a side
-                breakpoint()
                 chosen = prev if prev in feasible else min(           # keep prev side if feasible,
                     feasible, key=lambda s: (round(evals[s]["length"], 3),   # else quicker/smoother
                                              round(evals[s]["curv"], 3)))
-            else:                                                     # none clean: least-bad (TOP
-                chosen = min(("top", "left", "right"),                # wins ties: listed first)
-                             key=lambda s: (evals[s]["obst"], evals[s]["this_clip"],
-                                            evals[s]["frame"], round(evals[s]["length"], 3),
-                                            round(evals[s]["curv"], 3)))
+            else:                                                     # none feasible: fall back to
+                chosen = "top"                                        # TOP, always geometrically
+                #                                                       available (over the gate)
             wps = evals[chosen]["wps"]
-            labels = labels[:ins] + ["frame"] * 3 + labels[ins:]
+            labels = red_labels[:ins] + ["frame"] * 3 + red_labels[ins:]
+            self._frame_log.append({
+                "gate": int(gi), "key": key, "wrapped_to": round(R, 3), "points": 3,
+                "side": chosen, "past": not gate[2], "prev_side": prev,
+                "feasible": feasible, "obst": {s: evals[s]["obst"] for s in evals},
+                "dropped_detours": ndrop, "driver": "recross",
+            })
+
+        # Pass 2 -- RESIDUAL FRAME-MATERIAL cleanup. Wrap any sample still sitting in
+        # frame material that Pass 1 missed because the path never crosses the gate
+        # plane there (a same-side dip: the spline bulges into a bar and returns on
+        # the same side, so there is no re-crossing to key off). This is the "apply
+        # avoidance on ANY frame violation" step. Apply a wrap ONLY when it is a real
+        # improvement:
+        #   (a) it adds no obstacle violation,
+        #   (b) it STRICTLY reduces the total frame-material sample count across ALL
+        #       gates (so a wrap that trades one gate's clip for another is rejected),
+        #   (c) for a THREADED gate the path still threads the hole -- so we never
+        #       clear a gate we must fly through by routing around it, and never
+        #       over-wrap a thread that should be straightened instead.
+        # If nothing satisfies all three, stop and leave it as a residual rather than
+        # apply a harmful wrap. Greedy: deepest penetration into material first.
+        for _ in range(self._max_avoid_iters):
+            spline, t_sample = self._create_spline(np.asarray(wps), t_elapsed)
+            pos = spline(t_sample)
+            hit = self._worst_frame_material(pos)
+            if hit is None:
+                break
+            gi, k = hit
+            gate = frame_gates[gi]
+            threaded = gate[2]
+            base_total = int(sum(nn for _, nn in self._check_frame_violations(pos)))
+            evals, red_labels, ins, ndrop = self._wrap_candidates(
+                wps, labels, pos, k, gate, obs_xy, t_elapsed)
+            key = self._gate_key(gate[0])
+            prev = self._prev_wrap_side.get(key)
+            ok = [s for s in ("top", "left", "right")
+                  if evals[s]["obst"] == 0
+                  and evals[s]["total_frame"] < base_total
+                  and (not threaded or evals[s]["threads"])]
+            if not ok:
+                break                                    # no helpful, gate-preserving wrap
+            if "top" in ok:
+                chosen = "top"
+            else:
+                chosen = prev if prev in ok else min(
+                    ok, key=lambda s: (evals[s]["total_frame"],
+                                       round(evals[s]["length"], 3),
+                                       round(evals[s]["curv"], 3)))
+            wps = evals[chosen]["wps"]
+            labels = red_labels[:ins] + ["frame"] * 3 + red_labels[ins:]
             self._frame_log.append({
                 "gate": int(gi), "key": key, "wrapped_to": round(R, 3), "points": 3,
                 "side": chosen, "past": not threaded, "prev_side": prev,
-                "feasible": feasible, "obst": {s: evals[s]["obst"] for s in evals},
+                "feasible": ok, "obst": {s: evals[s]["obst"] for s in evals},
+                "dropped_detours": ndrop, "driver": "material",
             })
         return np.asarray(wps), labels
 
@@ -785,11 +922,126 @@ class GateCenterSplinePlanner(Planner):
                 sc = crossing & (mat[:-1] | mat[1:])
                 recross = [int(k) for k in np.where(sc)[0]]
             for k in recross:
-                ksamp = k if abs(x[k]) <= abs(x[k + 1]) else k + 1   # sample on the plane
+                knext = min(k + 1, len(x) - 1)
+                ksamp = k if abs(x[k]) <= abs(x[knext]) else knext   # sample on the plane
                 depth = abs(float(x[ksamp]))
                 if depth < worst_depth:                   # nearest the plane = clearest pass
                     worst_depth, worst = depth, (gi, int(ksamp))
         return worst
+
+    def _threads_gate(self, pos, c, Rg) -> bool:
+        """True if the path passes through this gate's open HOLE -- i.e. crosses the
+        gate plane at a lateral offset within the hole (<= hole_half on both samples
+        straddling the crossing). Used to reject a 'wrap' that would clear a THREADED
+        gate's frame by routing around it (skipping the hole) instead of threading it.
+        """
+        L = (np.asarray(pos, dtype=float) - c) @ Rg
+        x = L[:, 0]
+        lat = np.maximum(np.abs(L[:, 1]), np.abs(L[:, 2]))
+        crossing = np.sign(x[:-1]) != np.sign(x[1:])
+        hw = self._gate_hole_half
+        return bool(np.any(crossing & (lat[:-1] <= hw) & (lat[1:] <= hw)))
+
+    def _worst_frame_material(self, pos):
+        """Worst frame-MATERIAL entry across all frame gates, or None if clean.
+
+        This is the residual-violation detector that complements _worst_recrossing:
+        it flags samples sitting in a gate's frame material (strict: within the
+        half-thickness and laterally between the hole and outer edges) REGARDLESS of
+        whether the path crosses the gate plane there. That catches the case the
+        plane-crossing test misses -- the spline bulges into a bar and returns on the
+        SAME side, so there is no re-crossing to key off. The worst sample is the one
+        that penetrates deepest past the hole edge (largest lateral - hole_half).
+
+        Returns (gate_idx, sample_idx) into ``_frame_gates()`` for that sample.
+        """
+        gates = self._frame_gates()
+        if not gates:
+            return None
+        fh, oh, hw = 0.5 * self._gate_thickness, self._gate_outer_half, self._gate_hole_half
+        worst, worst_pen = None, 0.0
+        for gi, (c, Rg, _threaded) in enumerate(gates):
+            loc = np.abs((pos - c) @ Rg)
+            lat = np.maximum(loc[:, 1], loc[:, 2])
+            in_mat = (loc[:, 0] <= fh) & (lat > hw) & (lat <= oh)
+            if not in_mat.any():
+                continue
+            pen = np.where(in_mat, lat - hw, 0.0)
+            k = int(np.argmax(pen))
+            if float(pen[k]) > worst_pen:
+                worst_pen, worst = float(pen[k]), (gi, k)
+        return worst
+
+    def _wrap_candidates(self, wps, labels, pos, k, gate, obs_xy, t_elapsed):
+        """Build the LEFT / RIGHT / TOP wrap-arc candidates for a frame collision at
+        path sample ``k`` on ``gate`` = (centre, Rg, threaded).
+
+        Each candidate inserts a 3-point arc (entry / middle / exit, at radius
+        outer_half + FRAME_WRAP_CLEARANCE, entry/exit +/- FRAME_WRAP_SPACING along the
+        normal), drops any detour bracketing the same spot, re-splines and is scored.
+        Returns ``(evals, red_labels, ins, n_dropped)`` where ``evals[side]`` holds the
+        candidate ``wps`` plus its metrics: ``obst`` (obstacles violated), ``this_clip``
+        (samples still in THIS gate's material), ``frame`` (gates clipped, padded test),
+        ``total_frame`` (total frame-material samples over ALL gates), ``threads`` (does
+        the path still thread this gate's hole), ``length``, ``curv``. Shared by the
+        re-crossing pass and the material-cleanup pass.
+        """
+        c, Rg, _threaded = gate
+        normal = Rg[:, 0] / (np.linalg.norm(Rg[:, 0]) + 1e-12)
+        yaxis, zaxis = Rg[:, 1], Rg[:, 2]
+        # Horizontal "side" axis for LEFT/RIGHT: the in-plane axis closest to
+        # horizontal, flattened to z = 0 so left/right stay at the centre height.
+        side_ax = yaxis if abs(yaxis[2]) <= abs(zaxis[2]) else zaxis
+        side_ax = np.array([side_ax[0], side_ax[1], 0.0])
+        sn = np.linalg.norm(side_ax)
+        side_ax = side_ax / sn if sn > 1e-9 else np.array([1.0, 0.0, 0.0])
+        up = np.array([0.0, 0.0, 1.0])
+        R = self._gate_outer_half + FRAME_WRAP_CLEARANCE
+        D = FRAME_WRAP_SPACING
+        offsets = {"left": -R * side_ax, "right": R * side_ax, "top": R * up}
+
+        # entry/exit side along the normal (a couple of samples either side of the
+        # crossing avoid the near-zero ambiguity)
+        n = len(pos)
+        x_in = float((pos[max(0, k - 2)] - c) @ normal)
+        x_out = float((pos[min(n - 1, k + 2)] - c) @ normal)
+        s_in = 1.0 if x_in >= 0.0 else -1.0
+        s_out = -s_in if (x_out >= 0.0) == (x_in >= 0.0) else (1.0 if x_out >= 0.0 else -1.0)
+        # Drop the detour waypoint immediately adjacent to the wrap so it doesn't
+        # fight the arc (mirrors the detour drop in _avoid).
+        seg_j = self._insertion_index(wps, pos[k]) - 1
+        drop = {j for j, lab in enumerate(labels)
+                if lab == "detour" and j in (seg_j, seg_j + 1)}
+        red_wps = [w for j, w in enumerate(wps) if j not in drop]
+        red_labels = [lab for j, lab in enumerate(labels) if j not in drop]
+        ins = self._insertion_index(red_wps, pos[k])
+        fh, oh, hw = 0.5 * self._gate_thickness, self._gate_outer_half, self._gate_hole_half
+
+        def arc_for(o):
+            return [c + s_in * D * normal + o, c + o, c + s_out * D * normal + o]
+
+        def clips_this(cp):
+            loc = np.abs((cp - c) @ Rg)
+            lat = np.maximum(loc[:, 1], loc[:, 2])
+            return int(np.sum((loc[:, 0] <= fh) & (lat > hw) & (lat <= oh)))
+
+        evals = {}
+        for s, o in offsets.items():
+            cwps = red_wps[:ins] + arc_for(o) + red_wps[ins:]
+            cspline, ct = self._create_spline(np.asarray(cwps), t_elapsed)
+            cp = cspline(ct)
+            evals[s] = {
+                "wps": cwps,
+                "obst": (self._count_violations(cp[:, :2], obs_xy, self._obstacle_d_min)
+                         if obs_xy.size else 0),
+                "this_clip": clips_this(cp),
+                "frame": self._frame_clips(cp),
+                "total_frame": int(sum(nn for _, nn in self._check_frame_violations(cp))),
+                "threads": self._threads_gate(cp, c, Rg),
+                "length": self._path_length(cp),
+                "curv": self._path_curvature(cp),
+            }
+        return evals, red_labels, ins, len(drop)
 
     @staticmethod
     def _worst_violation(pos_xy, obs_xy, r):
@@ -905,7 +1157,7 @@ def plot_plan(planner, obs, traj=None, *, show=True, block=True, prev_fig=None,
 
     colors = {"start": "green", "attitude": "magenta", "approach": "tab:cyan",
               "gate": "black", "exit": "tab:blue", "detour": "tab:red",
-              "avoid": "darkorange", "frame": "purple"}
+              "avoid": "darkorange", "frame": "purple", "turn": "gold"}
     seen = set()
     for p, lab in zip(wps, labels):
         ax.scatter(*p, color=colors.get(lab, "gray"), s=48,

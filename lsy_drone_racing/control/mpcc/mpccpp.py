@@ -369,7 +369,7 @@ class MPCCpp(ControllerInterface):
         info: dict,
         config: dict,
         t_total: int,
-        N_horizon: int = 20,
+        N_horizon: int = 40,
         T_horizon: float = 0.7,
         mu: float = 8.0,
         q_lag: float = 80.0,
@@ -381,7 +381,7 @@ class MPCCpp(ControllerInterface):
         r_roll: float = 0.3,
         r_pitch: float = 0.3,
         r_yaw: float = 0.5,
-        w_speed_gate: float = 3.5,
+        w_speed_gate: float = 5.0,
         W_nom: float = 0.3,
         H_nom: float = 0.3,
         tunnel_sigma: float = 0.4,
@@ -402,6 +402,7 @@ class MPCCpp(ControllerInterface):
         obstacle_slack_quad: float = 1e4,
         gate_soft: bool = True,
         gate_weight: float = 3*1e3,
+        warmstart_reset_on_replan: bool = False,
         n_obstacles: int | None = None,
     ):
         """Initialize the MPCC++ controller.
@@ -463,6 +464,15 @@ class MPCCpp(ControllerInterface):
                                 the backup that keeps the drone off the physical
                                 frame if the soft tunnel is violated.
             gate_weight:        Weight of the soft gate-frame penalty.
+            warmstart_reset_on_replan:
+                                On a replan (replan_reference), how to treat the warm
+                                start. True (default): re-seed the primal guess along
+                                the freshly planned trajectory and push it into the
+                                solver -- "reset the warm start in the direction of the
+                                replan". False: leave the solver's retained (shifted)
+                                iterate as-is -- the vanilla warm start -- and only
+                                rebuild the reference / reset progress. Lets you A/B
+                                whether the aggressive reseed helps or hurts.
             n_obstacles:        OCP obstacle slots. Defaults to len(obs.pOLL_array).
         """
         super().__init__(obs, planner, info, config, t_total)
@@ -473,10 +483,13 @@ class MPCCpp(ControllerInterface):
         self._mu = float(mu)
         self._finished = False
         self._tick = 0
+        # Warm-start policy on replan: reset (reseed along the new plan) vs vanilla
+        # (keep the solver's retained iterate). See replan_reference / docstring.
+        self._warmstart_reset_on_replan = bool(warmstart_reset_on_replan)
 
         self._gates_information = {
             "total_length": 0.9, "total_height": 0.9,
-            "hole_width": 0.18,  "hole_height": 0.18,
+            "hole_width": 0.1,  "hole_height": 0.1,
             "thickness": 0.35,   "margin": 0.05,
         }
         self._obstacles_information = {"d_min": 0.15, "total_height": 2.0}
@@ -837,6 +850,15 @@ class MPCCpp(ControllerInterface):
           2. reset progress theta to 0 -- the drone IS the new start,
           3. re-seed theta_pred and the warm start along the new centerline.
 
+        Steps 1-2 always run (the reparameterisation roots theta = 0 at the drone
+        on the NEW ref, so progress must reset regardless). Step 3's warm-start
+        SEED is gated by ``self._warmstart_reset_on_replan``:
+          - True  -> reset the primal guess along the freshly planned trajectory
+                     and push it into the solver ("reset in the direction of the
+                     replan").
+          - False -> keep the solver's retained (shifted) iterate untouched -- the
+                     vanilla warm start; only the reference and progress change.
+
         Call this only when the planner has actually replanned (e.g. on the
         pipeline's gate/obstacle-moved trigger), not every control step.
 
@@ -862,15 +884,29 @@ class MPCCpp(ControllerInterface):
         self._ref_gate_pos  = gate_pos.copy()
         self._ref_gate_quat = np.asarray(gate_quat, dtype=float).copy()
 
-        # theta resets to the start: the new centerline begins at the drone.
+        # theta resets to the start: the new centerline begins at the drone. This
+        # is a consequence of the arc-length reparameterisation (theta = 0 is the
+        # drone on the NEW ref), so it runs regardless of the warm-start policy.
         self._last_theta = 0.0
         self._finished   = False
         v_guess = float(np.clip(np.linalg.norm(obs.vBLL), 0.5, self._v_theta_max))
         self._theta_pred = np.clip(
             np.arange(self._N + 1) * self._dt * v_guess, 0.0, self._ref.length
         )
-        # Seed the warm start along the DESIRED (planner) trajectory, not the
-        # gate-anchored tunnel centerline.
+
+        # --- warm-start policy (the flag) --------------------------------------
+        if not self._warmstart_reset_on_replan:
+            # VANILLA: leave _x_warm / _u_warm as the solver's retained (shifted)
+            # previous iterate. control() re-applies them on its next call, so the
+            # primal guess is untouched -- only the reference and progress changed.
+            print(
+                f"[MPCC++] Replan: reference rebuilt, warm start KEPT (vanilla); "
+                f"theta reset 0..{float(self._theta_pred[-1]):.2f} m."
+            )
+            return
+
+        # RESET: seed the warm start along the DESIRED (planner) trajectory, not
+        # the gate-anchored tunnel centerline.
         planner_pos = (np.asarray(trajectory.positions, dtype=float)
                        if hasattr(trajectory, "positions") else None)
         self._reinit_warmstart(v_guess, planner_pos)
