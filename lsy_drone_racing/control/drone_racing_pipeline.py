@@ -437,8 +437,8 @@ class DroneRacingPipeline(Controller):
             )
             trajectory = self._planner.plan(env_states, 0.0)
             self._debugger = ReplanDebugger(output_dir="replan_debug")
-            #self._debugger.dump(env_states, trajectory, self._planner,
-            #                    tag="initial", t_elapsed=0.0)
+            self._debugger.dump(env_states, trajectory, self._planner,
+                                tag="initial", t_elapsed=0.0)
             # plan() itself pops up / refreshes the diagnostic figure after every
             # plan (init and each replan) when SHOW_PLAN_PLOT is on -- nothing to do
             # here. Toggle that flag in gate_spline_planner.py to enable/disable.
@@ -490,8 +490,8 @@ class DroneRacingPipeline(Controller):
                 self._controller.replan_reference(trajectory, env_states)
                 self._force_replan = False
                 print("[MPCC++] Replanned -> tube + theta reset")
-                #self._debugger.dump(env_states, trajectory, self._planner,
-                #        t_elapsed=self._tick / self._freq)
+                self._debugger.dump(env_states, trajectory, self._planner,
+                        t_elapsed=self._tick / self._freq)
             return self._controller.control(env_states, info)
 
         # MPCC / NMPC: original flow.

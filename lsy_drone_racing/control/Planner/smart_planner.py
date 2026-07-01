@@ -106,9 +106,24 @@ class SplinePlanner(Planner):
         """
         # Current drone position
         pDLL = obs.pBLL
+        drone_quad = obs.qBLB
+        drone_yaw = R.from_quat(drone_quad).as_euler('zyx')[0]
+        #breakpoint()
 
         # Read out gates
         pGLL_array, y_GBL_array = self._gate(obs)
+        vel = obs.vBLL
+
+        start_vector = vel/(np.linalg.norm(vel) + 1e-4)
+        Start_distance = 0.03
+
+        if np.linalg.norm(vel) < 1e-3:
+            start_vector = np.array([Start_distance*np.cos(drone_yaw), -Start_distance*np.sin(drone_yaw), 0.05])
+        
+        #breakpoint()
+        first_wp = pDLL + Start_distance*start_vector
+
+
 
         # Read out obstacles
         pOLL_array = obs.pOLL_array
@@ -117,7 +132,7 @@ class SplinePlanner(Planner):
         Distance = 0.05
 
         # Create waypoint matrix
-        p_WLL_array = pDLL
+        p_WLL_array = np.vstack([pDLL, first_wp])
 
         pPrevLL = np.zeros(3)
         pNextLL = np.zeros(3)
