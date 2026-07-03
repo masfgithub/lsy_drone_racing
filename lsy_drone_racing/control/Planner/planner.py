@@ -105,7 +105,18 @@ class Planner(ABC):
         y_GBL_array = R.from_quat(qTLT[pTLL_index:]).as_euler('ZYX')[:, 0]
 
         # Centre position of gate frames
-        if pTLL_index + 2 > 4:
+        pGLL_array = obs.pTLL_array[pTLL_index:]
+
+        return pGLL_array, y_GBL_array
+        # Quaternion of gate frames
+        qTLT = obs.qTLT_array
+        pTLL_index = obs.pTLL_index
+        
+        # Extracted rotation matrix/Euler angles from the quaternion
+        y_GBL_array = R.from_quat(qTLT[pTLL_index:]).as_euler('ZYX')[:, 0]
+
+        # Centre position of gate frames
+        if pTLL_index + 4 > 4:
             pGLL_array = obs.pTLL_array[pTLL_index:]
             # ADD THIS: Slice the yaw array exactly the same way!
             y_GBL_array = y_GBL_array[pTLL_index:] 

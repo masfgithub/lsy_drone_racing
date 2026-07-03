@@ -3,7 +3,8 @@
 import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation as R
-
+from lsy_drone_racing.control.Planner.plot.GateCanidateplot import plot_gate_candidates
+from lsy_drone_racing.control.Planner.plot.ObstacleCanidateplot import plot_obstacle_candidates
 
 
 from lsy_drone_racing.control.env_obs import EnvState_t
@@ -346,7 +347,17 @@ class SplinePlanner(Planner):
         else:
             clear_B = False
 
-        return self._pick_better(wps_A, clear_A, wps_B, clear_B, t_elapsed, depth)
+        result_wps, result_clear = self._pick_better(
+            wps_A, clear_A, wps_B, clear_B, t_elapsed, depth
+        )
+        winner = "A" if result_wps is wps_A else "B"
+        plot_obstacle_candidates(
+            self, wps_A, wps_B, winner, entry_obst_c, t_elapsed, depth,
+            pOLL_array,
+            getattr(self, "_pGLL_array", None),
+            getattr(self, "_y_GBL_array", None),
+        )
+        return result_wps, result_clear
 
 
     def _pick_better(self, wps_A, clear_A, wps_B, clear_B, t_elapsed, depth=0):
@@ -1071,7 +1082,7 @@ class SplinePlanner(Planner):
             #self._plot_full_trajectory(
             #    wps=wps,
             #    spline=spline,
-            #    t_dense=t_dense,
+            #   t_dense=t_dense,
             #    pts=pts,
             #    pGLL_array=pGLL_array,
             #    y_GBL_array=y_GBL_array,
@@ -1129,7 +1140,13 @@ class SplinePlanner(Planner):
             # Pick the best branch
             winner, winner_name = self._pick_best_gate_branch(branch_L, branch_R, branch_T)
             print(f"  -> picked {winner_name}")
-            
+            plot_gate_candidates(
+                self,
+                {"Left": branch_L, "Right": branch_R, "Top": branch_T},
+                winner_name, gate_c, gate_yaw,
+                pGLL_array, y_GBL_array, pOLL_array,
+                t_elapsed, outer_iter,
+            )
             # Apply the winning branch's waypoints and continue
             wps = winner['wps']
         
