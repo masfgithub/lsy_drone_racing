@@ -8,7 +8,8 @@ problem is always feasible.
 """
 
 import numpy as np
-from casadi import MX, fmax
+from casadi import MX, fmax, fmin , sqrt
+POST_RADIUS = 0.10 + 0.05
 
 try:
     from obstacle import CylinderObstacle
@@ -70,6 +71,7 @@ def create_soft_env_constraints(
     obstacles: list[CylinderObstacle] | None = None,
     gate_weight: float = 1000.0,
     obstacle_weight: float = 1000.0,
+    post_weight=1000.0,
 ) -> dict:
     """Attach soft environment constraints to an AcadosModel as runtime parameters.
 
@@ -112,6 +114,10 @@ def create_soft_env_constraints(
     for gate in gates:
         p_win = p[offset : offset + WedgeWindow.N_PARAMS]
         penalty = penalty + gate_weight * WedgeWindow.casadi_penalty_sym(pBLL, p_win)
+        gate_center = p_win[0:3]                       # verify p_win[0:3] is [x,y,z] (see note)
+        penalty = penalty + post_weight * post_penalty_sym(
+            pBLL, gate_center, POST_RADIUS, gate.hole_height, gate.margin
+        )
         offset += WedgeWindow.N_PARAMS
 
     for obs in obstacles:
@@ -158,3 +164,16 @@ def verify_env_constraints(
         print(f"  obstacle {o_idx}: {'OK' if clean else 'VIOLATIONS FOUND'}")
         all_ok = all_ok and clean
     return all_ok
+
+
+def post_penalty_sym(pBLL, gate_center, r_post, hole_height, margin, z_floor=0.0):
+    """Capsule keep-out for the gate post: a vertical segment from the floor up to
+    just below the opening. Above the cap the penalty vanishes so the hole stays flyable."""
+    cx, cy, cz = gate_center[0], gate_center[1], gate_center[2]
+    z_top = cz - hole_height / 2 - margin - r_post     # radius folded in so it can't reach the hole
+    L = z_top - z_floor
+    t = fmin(fmax((pBLL[2] - z_floor) / L, MX(0)), MX(1))
+    seg_z = z_floor + t * L
+    dist = sqrt((pBLL[0] - cx) ** 2 + (pBLL[1] - cy) ** 2 + (pBLL[2] - seg_z) ** 2 + 1e-9)
+    viol = fmax(MX(0), MX(r_post) - dist)
+    return viol * viol

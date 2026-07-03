@@ -1,5 +1,6 @@
 """TBD: for Ruff."""
 
+import casadi as cs
 import numpy as np
 import scipy
 from acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
@@ -11,8 +12,13 @@ from lsy_drone_racing.control.nmpc.obstacle import CylinderObstacle
 from lsy_drone_racing.control.nmpc.window import Window
 
 
-def create_acados_model(parameters: dict) -> AcadosModel:
-    """Creates an acados model from a symbolic drone model."""
+def create_acados_model(parameters: dict, use_input_rate: bool = False) -> AcadosModel:
+    """Creates an acados model from a symbolic drone model.
+
+    When ``use_input_rate`` is True the four commands [r_cmd, p_cmd, y_cmd, f_cmd]
+    are promoted to states and their rates [dr_cmd, dp_cmd, dy_cmd, df_cmd] become
+    the inputs (see create_ocp_solver_soft).
+    """
     X_dot, X, U, _ = symbolic_dynamics_euler(
         mass=parameters["mass"],
         gravity_vec=parameters["gravity_vec"],
@@ -26,11 +32,23 @@ def create_acados_model(parameters: dict) -> AcadosModel:
     )
 
     model = AcadosModel()
-    model.name = "soft_example_mpc"
-    model.f_expl_expr = X_dot
     model.f_impl_expr = None
-    model.x = X
-    model.u = U
+
+    if use_input_rate:
+        sym = cs.SX.sym if isinstance(U, cs.SX) else cs.MX.sym
+        nu0 = U.shape[0]
+        u_cmd  = sym("u_cmd", nu0)    # [r_cmd, p_cmd, y_cmd, f_cmd]  (states)
+        du_cmd = sym("du_cmd", nu0)   # [dr_cmd, dp_cmd, dy_cmd, df_cmd]  (inputs)
+        X_dot_sub = cs.substitute(X_dot, U, u_cmd)
+        model.name = "soft_rate_aug_mpc"
+        model.x = cs.vertcat(X, u_cmd)
+        model.u = du_cmd
+        model.f_expl_expr = cs.vertcat(X_dot_sub, du_cmd)
+    else:
+        model.name = "soft_example_mpc"
+        model.x = X
+        model.u = U
+        model.f_expl_expr = X_dot
 
     return model
 
@@ -43,11 +61,24 @@ def create_ocp_solver_soft(
     obstacles: list[CylinderObstacle],
     gate_weight: float = 1000.0,
     obstacle_weight: float = 1000.0,
+    post_weight=1000.0,
+    use_input_rate: bool = False,
+    df_cmd_rate_max: float | None = 5.0,
+    dr_cmd_rate_max: float | None = None,
+    dp_cmd_rate_max: float | None = None,
+    dy_cmd_rate_max: float | None = None,
+    rate_limit_default: float = 10.0,
+    r_rate: float = 0.01,
     verbose: bool = False,
 ) -> tuple[AcadosOcpSolver, AcadosOcp]:
-    """Creates an acados OCP with soft environment constraints in the cost."""
+    """Creates an acados OCP with soft environment constraints in the cost.
+
+    ``use_input_rate`` and the ``*_cmd_rate_max`` / ``r_rate`` args behave exactly
+    as in the hard ``create_ocp_solver`` (commands become states, rates the inputs,
+    input box -> per-command slew-rate limit).
+    """
     ocp = AcadosOcp()
-    ocp.model = create_acados_model(parameters)
+    ocp.model = create_acados_model(parameters, use_input_rate=use_input_rate)
 
     nx = ocp.model.x.rows()
     nu = ocp.model.u.rows()
@@ -65,6 +96,7 @@ def create_ocp_solver_soft(
         obstacles=obstacles,
         gate_weight=gate_weight,
         obstacle_weight=obstacle_weight,
+        post_weight=post_weight
     )
 
     # ── Cost: NONLINEAR_LS with penalty appended to residual ──────────────────
@@ -102,39 +134,23 @@ def create_ocp_solver_soft(
     ocp.cost.cost_type_e = "NONLINEAR_LS"
 
     # ── Weight matrices ───────────────────────────────────────────────────────
-    Q = np.diag(
-        [
-            100.0,
-            100.0,
-            300.0,  # pos
-            0.5,
-            0.5,
-            0.5,  # rpy
-            1.5,
-            1.5,
-            1.5,  # vel
-            1.5,
-            1.5,
-            1.5,  # drpy
-        ]
+    Q_diag = np.array(
+        [100.0, 100.0, 300.0,  0.5, 0.5, 0.5,  1.5, 1.5, 1.5,  1.5, 1.5, 1.5]
     )
-    Q_e = np.diag(
-        [
-            50.0,
-            50.0,
-            50.0,  # pos
-            0.1,
-            0.1,
-            0.1,  # rpy
-            0.1,
-            0.1,
-            0.1,  # vel
-            0.1,
-            0.1,
-            0.1,  # drpy
-        ]
+    Q_e_diag = np.array(
+        [50.0, 50.0, 50.0,  0.1, 0.1, 0.1,  0.1, 0.1, 0.1,  0.1, 0.1, 0.1]
     )
-    R = np.diag([0.1, 0.1, 0.1, 0.1])  # rpy + thrust
+    cmd_diag = np.array([0.1, 0.1, 0.1, 0.1])  # command penalty (rpy_cmd + thrust)
+
+    if use_input_rate:
+        # Commands are states -> penalty joins Q; inputs are rates -> small reg.
+        Q = np.diag(np.concatenate([Q_diag, cmd_diag]))
+        Q_e = np.diag(np.concatenate([Q_e_diag, cmd_diag]))
+        R = np.diag([r_rate, r_rate, r_rate, r_rate])
+    else:
+        Q = np.diag(Q_diag)
+        Q_e = np.diag(Q_e_diag)
+        R = np.diag(cmd_diag)
 
     # Penalty weight in the LS sense: weight = 1 because the weight is already
     # baked into gate_weight/obstacle_weight inside penalty_expr.
@@ -150,13 +166,39 @@ def create_ocp_solver_soft(
     ocp.cost.yref_e = np.zeros(nx + 1)  # nx + 1 penalty term
 
     # ── State and input constraints ───────────────────────────────────────────
-    ocp.constraints.lbx = np.array([-0.5, -0.5, -0.5])
-    ocp.constraints.ubx = np.array([0.5, 0.5, 0.5])
-    ocp.constraints.idxbx = np.array([3, 4, 5])
+    thrust_min = parameters["thrust_min"] * 4
+    thrust_max = parameters["thrust_max"] * 4
+    if use_input_rate:
+        # Commands are states: magnitude limits -> state box (idx 12..15); the
+        # input box becomes per-command slew-rate limits on the rate inputs.
+        ocp.constraints.lbx = np.array(
+            [-0.5, -0.5, -0.5,  -0.5, -0.5, -0.5,  thrust_min]
+        )
+        ocp.constraints.ubx = np.array(
+            [0.5, 0.5, 0.5,  0.5, 0.5, 0.5,  thrust_max]
+        )
+        ocp.constraints.idxbx = np.array([3, 4, 5, 12, 13, 14, 15])
 
-    ocp.constraints.lbu = np.array([-0.5, -0.5, -0.5, parameters["thrust_min"] * 4])
-    ocp.constraints.ubu = np.array([0.5, 0.5, 0.5, parameters["thrust_max"] * 4])
-    ocp.constraints.idxbu = np.array([0, 1, 2, 3])
+        def _rate_bound(val: float | None) -> float:
+            return float(rate_limit_default) if val is None else float(val)
+
+        du_rate = np.array([
+            _rate_bound(dr_cmd_rate_max),
+            _rate_bound(dp_cmd_rate_max),
+            _rate_bound(dy_cmd_rate_max),
+            _rate_bound(df_cmd_rate_max),
+        ])
+        ocp.constraints.lbu = -du_rate
+        ocp.constraints.ubu = du_rate
+        ocp.constraints.idxbu = np.array([0, 1, 2, 3])
+    else:
+        ocp.constraints.lbx = np.array([-0.5, -0.5, -0.5])
+        ocp.constraints.ubx = np.array([0.5, 0.5, 0.5])
+        ocp.constraints.idxbx = np.array([3, 4, 5])
+
+        ocp.constraints.lbu = np.array([-0.5, -0.5, -0.5, thrust_min])
+        ocp.constraints.ubu = np.array([0.5, 0.5, 0.5, thrust_max])
+        ocp.constraints.idxbu = np.array([0, 1, 2, 3])
 
     ocp.constraints.x0 = np.zeros(nx)
 
