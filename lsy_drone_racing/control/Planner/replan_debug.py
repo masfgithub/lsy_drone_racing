@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 import matplotlib
 
@@ -10,6 +11,9 @@ matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+
+if TYPE_CHECKING:
+    from lsy_drone_racing.control.env_obs import EnvState_t
 
 DEFAULT_FRAME_WIDTH = 0.72
 DEFAULT_FRAME_OPENING = 0.4
@@ -47,12 +51,26 @@ class ReplanDebugger:
 
     def dump(
         self,
-        env_states,
-        trajectory,
-        planner=None,
+        env_states: EnvState_t,
+        trajectory: object,
+        planner: object | None = None,
         tag: str | None = None,
         t_elapsed: float | None = None,
     ) -> str:
+        """Render the current gates/obstacles/trajectory/waypoints to a 3D plot and save it.
+
+        Args:
+            env_states: Current environment observation (drone pose, gates, obstacles).
+            trajectory: The planned trajectory, either a Trajectory (uses .positions)
+                        or a raw (n, 3) points array.
+            planner:    The planner instance, used to pull its `_waypoints` for
+                        plotting, if available.
+            tag:        Name fragment used in the saved filename; defaults to "replan".
+            t_elapsed:  Current race time, forwarded to the plot for context.
+
+        Returns:
+            The path the figure was saved to.
+        """
         # --- pull data out of the inputs --------------------------------------
         start = np.asarray(env_states.pBLL, dtype=float)
         gates = np.asarray(env_states.pTLL_array, dtype=float)
@@ -194,7 +212,15 @@ class ReplanDebugger:
         plt.pause(0.1)  # Small pause allows the GUI framework to catch up and draw the window
 
     @staticmethod
-    def _draw_gate(ax, c, yaw, half, color, lw=2.0):
+    def _draw_gate(
+        ax: object,
+        c: np.ndarray,
+        yaw: float,
+        half: float,
+        color: str,
+        lw: float = 2.0,
+    ) -> None:
+        """Draw a square gate frame of half-width `half` centered at c with heading yaw."""
         w = np.array([-np.sin(yaw), np.cos(yaw), 0.0])
         zz = np.array([0.0, 0.0, 1.0])
         corners = [(-1, -1), (1, -1), (1, 1), (-1, 1), (-1, -1)]
@@ -202,7 +228,16 @@ class ReplanDebugger:
         ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=color, lw=lw)
 
     @staticmethod
-    def _draw_cylinder(ax, c, radius, z0, z1, color, alpha):
+    def _draw_cylinder(
+        ax: object,
+        c: np.ndarray,
+        radius: float,
+        z0: float,
+        z1: float,
+        color: str,
+        alpha: float,
+    ) -> None:
+        """Draw a vertical cylinder (obstacle keep-out) of given radius from z0 to z1."""
         th = np.linspace(0, 2 * np.pi, 28)
         T, Z = np.meshgrid(th, np.array([z0, z1]))
         X = c[0] + radius * np.cos(T)
@@ -210,6 +245,7 @@ class ReplanDebugger:
         ax.plot_surface(X, Y, Z, color=color, alpha=alpha, linewidth=0, shade=False)
 
     @staticmethod
-    def _equal_3d(ax):
+    def _equal_3d(ax: object) -> None:
+        """Set equal-aspect 3D axis limits based on the current x/y/z data limits."""
         xl, yl, zl = ax.get_xlim3d(), ax.get_ylim3d(), ax.get_zlim3d()
         ax.set_box_aspect((xl[1] - xl[0], yl[1] - yl[0], zl[1] - zl[0]))

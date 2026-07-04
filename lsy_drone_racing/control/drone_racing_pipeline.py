@@ -32,6 +32,8 @@ if TYPE_CHECKING:
     from crazyflow import Sim
     from numpy.typing import NDArray
 
+    from lsy_drone_racing.control.env_obs import EnvState_t
+
 
 def _draw_wedge_gate(
     sim: Sim,
@@ -144,10 +146,15 @@ def _draw_wedge_gate(
 
 
 def _draw_mpccpp_tunnel(
-    sim: Sim, controller, ring_rgba: NDArray | None = None, corner_rgba: NDArray | None = None
+    sim: Sim,
+    controller: object,
+    ring_rgba: NDArray | None = None,
+    corner_rgba: NDArray | None = None,
 ):
-    """Draw the MPCC++ prediction tunnel: the rectangular cross-section at every
-    predicted horizon node (4 corners + 4 edges) plus the longitudinal rails.
+    """Draw the MPCC++ prediction tunnel.
+
+    Draws the rectangular cross-section at every predicted horizon node
+    (4 corners + 4 edges) plus the longitudinal rails.
 
     Cross-section at progress theta: centre ref.eval(theta), spanned by the
     tunnel frame (n, b) = ref.frame(theta) with half-extents (W, H) =
@@ -257,7 +264,7 @@ def _draw_post(
     )
 
 
-def _draw_tunnel_centerline(sim: Sim, ref, n: int = 150, rgba: NDArray | None = None):
+def _draw_tunnel_centerline(sim: Sim, ref: object, n: int = 150, rgba: NDArray | None = None):
     """Draw the MPCC++ tunnel centerline as a sequence of line segments."""
     if sim.viewer is None:
         return
@@ -269,7 +276,7 @@ def _draw_tunnel_centerline(sim: Sim, ref, n: int = 150, rgba: NDArray | None = 
 
 
 def plot_tube_width_profile(
-    ref,
+    ref: object,
     save_path: str = "tube_width_profile.png",
     n: int = 1500,
     floor: float = 0.05,
@@ -490,7 +497,7 @@ class DroneRacingPipeline(Controller):
         self._planner.replan()
         return self._controller.control(env_states, info)
 
-    def _get_replan_reason(self, env_states) -> bool:
+    def _get_replan_reason(self, env_states: EnvState_t) -> bool:
         """True if the active gate or any obstacle moved more than 1 cm."""
         idx = int(getattr(env_states, "pTLL_index", 0))
         if np.linalg.norm(self.nominal_gates_position[idx] - env_states.pTLL_array[idx]) > 0.01:

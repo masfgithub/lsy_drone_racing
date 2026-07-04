@@ -122,7 +122,9 @@ class SplinePlanner(Planner):
             p_WLL_array = np.vstack([p_WLL_array, pNextLL])
         # p_WLL_array = self._180_degree_turn(p_WLL_array,
         #                                    pOLL_array, pGLL_array, y_GBL_array, t_elapsed, obs)
-        # p_WLL_array = self._avoid_collisions(p_WLL_array, pOLL_array, pGLL_array, y_GBL_array, t_elapsed)
+        # p_WLL_array = self._avoid_collisions(
+        #     p_WLL_array, pOLL_array, pGLL_array, y_GBL_array, t_elapsed
+        # )
 
         p_WLL_array = self._avoidance_tree(
             p_WLL_array, pOLL_array, pGLL_array, y_GBL_array, t_elapsed
@@ -189,8 +191,9 @@ class SplinePlanner(Planner):
         max_depth: int = 6,
         depth: int = 0,
     ) -> tuple[np.ndarray, bool]:
-        """Recursively explore: at each NEW obstacle, branch into both directions
-        and iteratively resolve that one obstacle inside each branch.
+        """Recursively explore: at each NEW obstacle, branch into both directions.
+
+        Iteratively resolve that one obstacle inside each branch.
         """
         if depth >= max_depth:
             return wps, False
@@ -251,7 +254,15 @@ class SplinePlanner(Planner):
 
         return self._pick_better(wps_A, clear_A, wps_B, clear_B, t_elapsed, depth)
 
-    def _pick_better(self, wps_A, clear_A, wps_B, clear_B, t_elapsed, depth=0):
+    def _pick_better(
+        self,
+        wps_A: np.ndarray,
+        clear_A: bool,
+        wps_B: np.ndarray,
+        clear_B: bool,
+        t_elapsed: float,
+        depth: int = 0,
+    ) -> tuple[np.ndarray, bool]:
         """Pick the better of two candidate branches.
 
         Priority:
@@ -343,8 +354,9 @@ class SplinePlanner(Planner):
         target_obst_c: np.ndarray,
         max_iter: int = 10,
     ) -> tuple[np.ndarray, bool]:
-        """Insert initial detour with chosen sign, then iteratively add waypoints
-        until the SPECIFIC target obstacle is no longer hit.
+        """Insert initial detour with chosen sign, then iteratively add waypoints.
+
+        Waypoints are added until the SPECIFIC target obstacle is no longer hit.
 
         Returns:
             wps:        Waypoints after this obstacle is resolved.
@@ -382,7 +394,9 @@ class SplinePlanner(Planner):
         # Failed to clear after max_iter
         return wps, False
 
-    def _find_specific_obstacle_violation(self, pts, target_obst_c, r_obstacle=None):
+    def _find_specific_obstacle_violation(
+        self, pts: np.ndarray, target_obst_c: np.ndarray, r_obstacle: float | None = None
+    ) -> tuple[int, int] | None:
         """Find the first violation of a SPECIFIC obstacle in pts.
 
         Args:
@@ -432,12 +446,15 @@ class SplinePlanner(Planner):
         items.sort(key=lambda it: it[0])
         return np.array([pt for _, pt in items])
 
-    def _compute_initial_push_vector(self, p_in, p_out, obst_c):
+    def _compute_initial_push_vector(
+        self, p_in: np.ndarray, p_out: np.ndarray, obst_c: np.ndarray
+    ) -> np.ndarray:
         """Compute the radial bisector push direction (xy unit vector).
 
         Args:
-            p_in, p_out:  Entry and exit points of the violation.
-            obst_c:       2D obstacle center.
+            p_in:    Entry point of the violation.
+            p_out:   Exit point of the violation.
+            obst_c:  2D obstacle center.
 
         Returns:
             push_vector:  2D unit vector pointing away from obstacle through midpoint.
@@ -451,7 +468,9 @@ class SplinePlanner(Planner):
             nb = np.linalg.norm(bis) + 1e-9
         return bis / nb
 
-    def _find_first_obstacle_violation(self, pts, pOLL_array):
+    def _find_first_obstacle_violation(
+        self, pts: np.ndarray, pOLL_array: np.ndarray
+    ) -> tuple[int, int, np.ndarray] | tuple[None, None, None]:
         """Find the first obstacle-violation segment in a dense pts array.
 
         Args:
@@ -482,7 +501,9 @@ class SplinePlanner(Planner):
             return entry_i, len(pts) - 1, entry_obst_c
         return None, None, None
 
-    def _compute_detour_waypoint(self, p_in, p_out, obst_c, push_vector):
+    def _compute_detour_waypoint(
+        self, p_in: np.ndarray, p_out: np.ndarray, obst_c: np.ndarray, push_vector: np.ndarray
+    ) -> np.ndarray:
         """Compute a single detour waypoint outside the obstacle.
 
         Args:
@@ -511,8 +532,10 @@ class SplinePlanner(Planner):
         local_radius: float = 0.5,
         n_samples: int = 30,
     ) -> bool:
-        """Insert new_wp into wps and check if the resulting spline violates a gate
-        in a window of arc-length around the insertion point.
+        """Insert new_wp into wps and check for a nearby gate violation.
+
+        Checks if the resulting spline violates a gate in a window of arc-length
+        around the insertion point.
 
         Args:
             wps:            Current waypoint list (without new_wp).
@@ -598,10 +621,8 @@ class SplinePlanner(Planner):
 
             # Init helping variables
             detours = []
-            inside_obst = False
             inside_gate = False
             entry_i = None
-            entry_obst_c = None
 
             entry_gate_c = None
             entry_gate_yaw = None
@@ -626,7 +647,9 @@ class SplinePlanner(Planner):
                     # breakpoint()
                     # 2D radial push around obsticle
                     push_vector = (p_mid - entry_gate_c) / np.linalg.norm(p_mid - entry_gate_c)
-                    # push_vector = self._get_gate_push_vector(entry_gate_c, entry_gate_yaw, p_in, p_out, p_mid)
+                    # push_vector = self._get_gate_push_vector(
+                    #     entry_gate_c, entry_gate_yaw, p_in, p_out, p_mid
+                    # )
                     push_length = self._get_gate_push(
                         p_mid.copy(), entry_gate_c, entry_gate_yaw, push_vector
                     )
@@ -646,7 +669,9 @@ class SplinePlanner(Planner):
 
         return wps
 
-    def _compute_gate_detour_waypoint(self, gate_c, gate_yaw, push_vector):
+    def _compute_gate_detour_waypoint(
+        self, gate_c: np.ndarray, gate_yaw: float, push_vector: np.ndarray
+    ) -> np.ndarray:
         """Compute a detour waypoint outside the gate frame in the given direction.
 
         Starts from the gate CENTER, pushes outward in push_vector direction until
@@ -667,7 +692,14 @@ class SplinePlanner(Planner):
         new_wp = gate_c + push_length * push_vector
         return new_wp
 
-    def _find_first_gate_violation(self, pts, cum, pGLL_array, y_GBL_array, skip_approach=True):
+    def _find_first_gate_violation(
+        self,
+        pts: np.ndarray,
+        cum: np.ndarray,
+        pGLL_array: np.ndarray,
+        y_GBL_array: np.ndarray,
+        skip_approach: bool = True,
+    ) -> tuple[int, int, np.ndarray, float] | tuple[None, None, None, None]:
         """Find first gate-frame violation along the spline.
 
         Skips "approach-side" violations: when the spline curves toward a gate and
@@ -888,14 +920,6 @@ class SplinePlanner(Planner):
         local_len = float(window_cum[-1] - window_cum[0]) if len(window_cum) > 1 else 0.0
 
         # DEBUG: plot this branch's result
-        # Determine a branch name from the push direction
-        if abs(push_vector[2]) > 0.5:
-            branch_name = "Top"
-        elif push_vector[1] > 0:
-            branch_name = "Left" if target_gate_yaw > 0 else "Right"
-        else:
-            branch_name = "Right" if target_gate_yaw > 0 else "Left"
-
         # self._plot_gate_branch(
         #    wps=test_wps,
         #    spline=spline,
@@ -916,7 +940,9 @@ class SplinePlanner(Planner):
             "success": True,
         }
 
-    def _insert_detour(self, wps, new_wp, s_target, t_elapsed):
+    def _insert_detour(
+        self, wps: np.ndarray, new_wp: np.ndarray, s_target: float, t_elapsed: float
+    ) -> np.ndarray:
         """Insert new_wp into wps at the position matching s_target arc-length."""
         spline, t_sample = self._create_spline(wps, t_elapsed)
         t_dense = np.linspace(0, t_sample[-1], len(t_sample) * 4)
@@ -1081,7 +1107,9 @@ class SplinePlanner(Planner):
         3. Shortest local arc length (tiebreaker — pick the most efficient path)
 
         Args:
-            branch_L, branch_R, branch_T:  Dicts from _evaluate_gate_branch.
+            branch_L:  Dict from _evaluate_gate_branch for the left detour.
+            branch_R:  Dict from _evaluate_gate_branch for the right detour.
+            branch_T:  Dict from _evaluate_gate_branch for the top detour.
 
         Returns:
             (winning_branch, name):  The winning branch dict and its name string.
@@ -1091,7 +1119,9 @@ class SplinePlanner(Planner):
         winner_name, winner = candidates[0]
         return winner, winner_name
 
-    def _compute_3_gate_push_directions(self, gate_yaw):
+    def _compute_3_gate_push_directions(
+        self, gate_yaw: float
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Return three unit push vectors in world frame: (left, right, top).
 
         These are the three sensible directions to displace a detour waypoint
@@ -1111,7 +1141,9 @@ class SplinePlanner(Planner):
         push_T = np.array([0.0, 0.0, 1.0])
         return push_L, push_R, push_T
 
-    def _find_target_gate_violation(self, pts, target_gate_c, target_gate_yaw):
+    def _find_target_gate_violation(
+        self, pts: np.ndarray, target_gate_c: np.ndarray, target_gate_yaw: float
+    ) -> tuple[int, int] | tuple[None, None]:
         """Find the first violation of a SPECIFIC gate in pts.
 
         Args:
@@ -1142,13 +1174,20 @@ class SplinePlanner(Planner):
             return entry_i, len(pts) - 1
         return None, None
 
-    def _pick_best_gate_branch(self, branch_L, branch_R, branch_T):
+    def _pick_best_gate_branch(
+        self, branch_L: dict, branch_R: dict, branch_T: dict
+    ) -> tuple[dict, str]:
         """Pick the best of three gate-detour branches.
 
         Priority:
         1. Fewest gate hits
         2. Fewest obstacle hits
         3. Shortest local arc length
+
+        Args:
+            branch_L:  Dict from _evaluate_gate_branch for the left detour.
+            branch_R:  Dict from _evaluate_gate_branch for the right detour.
+            branch_T:  Dict from _evaluate_gate_branch for the top detour.
 
         Returns:
             (winning_branch_dict, branch_name)
@@ -1227,8 +1266,7 @@ class SplinePlanner(Planner):
                     inside_obst = False
                     p_in, p_out = pts[entry_i], p
                     p_mid = (p_out + p_in) / 2
-                    mid_idx = (entry_i + i) // 2
-                    # p_mid = pts[mid_idx]
+                    # p_mid = pts[(entry_i + i) // 2]
                     # breakpoint()
                     # 2D radial push around obsticle
                     bis = (p_in[:2] - entry_obst_c) + (p_out[:2] - entry_obst_c)
@@ -1268,7 +1306,9 @@ class SplinePlanner(Planner):
                     # breakpoint()
                     # 2D radial push around obsticle
                     push_vector = (p_mid - entry_gate_c) / np.linalg.norm(p_mid - entry_gate_c)
-                    # push_vector = self._get_gate_push_vector(entry_gate_c, entry_gate_yaw, p_in, p_out, p_mid)
+                    # push_vector = self._get_gate_push_vector(
+                    #     entry_gate_c, entry_gate_yaw, p_in, p_out, p_mid
+                    # )
                     push_length = self._get_gate_push(
                         p_mid.copy(), entry_gate_c, entry_gate_yaw, push_vector
                     )
@@ -1290,7 +1330,7 @@ class SplinePlanner(Planner):
     def _plot_gate_branch(
         self,
         wps: np.ndarray,
-        spline,
+        spline: CubicSpline,
         t_dense: np.ndarray,
         target_gate_c: np.ndarray,
         target_gate_yaw: float,
@@ -1535,7 +1575,16 @@ class SplinePlanner(Planner):
         plt.pause(0.001)
         return save_path
 
-    def _plot_gate_frame_3d(self, ax, c, yaw, half, color, lw=2.0, alpha=1.0):
+    def _plot_gate_frame_3d(
+        self,
+        ax: object,
+        c: np.ndarray,
+        yaw: float,
+        half: float,
+        color: str,
+        lw: float = 2.0,
+        alpha: float = 1.0,
+    ) -> None:
         """Helper: draw a square gate frame in 3D matplotlib axes."""
         w = np.array([-np.sin(yaw), np.cos(yaw), 0.0])
         zz = np.array([0.0, 0.0, 1.0])
@@ -1546,7 +1595,7 @@ class SplinePlanner(Planner):
     def _plot_full_trajectory(
         self,
         wps: np.ndarray,
-        spline,
+        spline: CubicSpline,
         t_dense: np.ndarray,
         pts: np.ndarray,
         pGLL_array: np.ndarray,

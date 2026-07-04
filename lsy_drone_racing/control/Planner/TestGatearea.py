@@ -28,6 +28,8 @@ except Exception:
 
     @dataclass
     class EnvState_t:
+        """Fallback observation state, used when the real EnvState_t is unavailable."""
+
         pBLL: np.ndarray = field(default_factory=lambda: np.zeros(3))
         vBLL: np.ndarray = field(default_factory=lambda: np.zeros(3))
         wBLL: np.ndarray = field(default_factory=lambda: np.zeros(3))
@@ -44,7 +46,8 @@ except Exception:
 # ---------- helpers ----------------------------------------------------------
 
 
-def make_obs(start, gates, obstacles):
+def make_obs(start: np.ndarray, gates: list, obstacles: list) -> EnvState_t:
+    """Build a minimal EnvState_t from a start position, gate list, and obstacle list."""
     obs = EnvState_t()
     obs.pBLL = np.asarray(start, float)
     obs.vBLL = np.zeros(3)
@@ -59,7 +62,9 @@ def make_obs(start, gates, obstacles):
     return obs
 
 
-def sample_grid_around_gate(gate_pos, gate_yaw, resolution=35, margin=0.2):
+def sample_grid_around_gate(
+    gate_pos: np.ndarray, gate_yaw: float, resolution: int = 35, margin: float = 0.2
+) -> np.ndarray:
     """Build a 3D grid of world-frame points around the gate."""
     half = max(FRAME_WIDTH / 2, FRAME_THICK / 2) + margin
 
@@ -76,7 +81,9 @@ def sample_grid_around_gate(gate_pos, gate_yaw, resolution=35, margin=0.2):
     return np.stack([WX.ravel(), WY.ravel(), WZ.ravel()], axis=1)
 
 
-def classify_points(planner, pts_world, gate_pos, gate_yaw):
+def classify_points(
+    planner: object, pts_world: np.ndarray, gate_pos: np.ndarray, gate_yaw: float
+) -> np.ndarray:
     """Run each point through _check_gate3, return boolean mask of 'inside'."""
     pGLL_single = np.array([gate_pos])
     yaw_single = np.array([gate_yaw])
@@ -88,7 +95,7 @@ def classify_points(planner, pts_world, gate_pos, gate_yaw):
     return inside
 
 
-def draw_gate_outlines(ax, gate_pos, gate_yaw):
+def draw_gate_outlines(ax: object, gate_pos: np.ndarray, gate_yaw: float) -> None:
     """Add the nominal frame and opening outlines to the plot."""
     w = np.array([-np.sin(gate_yaw), np.cos(gate_yaw), 0.0])
     zz = np.array([0.0, 0.0, 1.0])
@@ -117,8 +124,14 @@ def draw_gate_outlines(ax, gate_pos, gate_yaw):
 
 
 def plot_single_gate(
-    planner, gate_pos, gate_yaw, gate_idx, resolution=35, margin=0.2, save_dir="."
-):
+    planner: object,
+    gate_pos: np.ndarray,
+    gate_yaw: float,
+    gate_idx: int,
+    resolution: int = 35,
+    margin: float = 0.2,
+    save_dir: str = ".",
+) -> plt.Figure:
     """Generate a single-gate visualization."""
     pts_world = sample_grid_around_gate(gate_pos, gate_yaw, resolution, margin)
     inside = classify_points(planner, pts_world, gate_pos, gate_yaw)
@@ -174,8 +187,14 @@ def plot_single_gate(
 
 
 def plot_slice_views(
-    planner, gate_pos, gate_yaw, gate_idx, resolution=80, margin=0.2, save_dir="."
-):
+    planner: object,
+    gate_pos: np.ndarray,
+    gate_yaw: float,
+    gate_idx: int,
+    resolution: int = 80,
+    margin: float = 0.2,
+    save_dir: str = ".",
+) -> plt.Figure:
     """Generate 2D slices through the gate for easier inspection.
 
     Three slices: through the gate plane (xy at gate z),

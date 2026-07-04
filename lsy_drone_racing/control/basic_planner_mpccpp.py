@@ -61,7 +61,7 @@ class BasicPlannerMPCCpp:
     def __init__(
         self,
         obs: "EnvState_t",
-        config,
+        config: dict,
         t_total: int,
         warp_sigma: float = 0.8,
         gate_move_tol: float = 0.02,
