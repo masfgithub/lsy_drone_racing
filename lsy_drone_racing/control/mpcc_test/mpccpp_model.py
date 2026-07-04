@@ -1,4 +1,4 @@
-"""MPCC++ model: plain MPCC + the prismatic gate/track tunnel (eq.7) + soft obstacle (stick) avoidance.
+"""MPCC++ model: plain MPCC + the prismatic gate/track tunnel (eq.7) + soft obstacle avoidance.
 
 Dynamics and the least-squares cost residual are reused unchanged from
 mpcc_model.py. Two constraint groups are exposed via con_h_expr:
@@ -39,14 +39,14 @@ from lsy_drone_racing.control.mpcc_test.mpcc_model import (
 )
 
 # ---- parameter / constraint layout ----------------------------------------
-N_TUNNEL = 4                 # tunnel halfspaces
-NP_BASE_TUNNEL = 20          # 12 cost params + 8 tunnel params (always reserved)
-NRM = slice(12, 15)          # tunnel frame n
-BNM = slice(15, 18)          # tunnel frame b
-WIDX = 18                    # tunnel half-width
-HIDX = 19                    # tunnel half-height
-OBST_START = 20              # first obstacle param index
-OBST_DIM = 3                 # [x, y, r] per obstacle
+N_TUNNEL = 4  # tunnel halfspaces
+NP_BASE_TUNNEL = 20  # 12 cost params + 8 tunnel params (always reserved)
+NRM = slice(12, 15)  # tunnel frame n
+BNM = slice(15, 18)  # tunnel frame b
+WIDX = 18  # tunnel half-width
+HIDX = 19  # tunnel half-height
+OBST_START = 20  # first obstacle param index
+OBST_DIM = 3  # [x, y, r] per obstacle
 
 
 def num_params(cfg: MPCCConfig) -> int:
@@ -76,9 +76,9 @@ class MPCCppConfig(MPCCConfig):
     tunnel_slack_quad: float = 1e3
     # obstacles (sticks)
     use_obstacles: bool = True
-    n_obstacles: int = 1                 # max number of sticks baked into the OCP
+    n_obstacles: int = 1  # max number of sticks baked into the OCP
     obstacle_soft: bool = True
-    obstacle_slack_lin: float = 1e4      # higher than the tunnel -> near-hard keep-out
+    obstacle_slack_lin: float = 1e4  # higher than the tunnel -> near-hard keep-out
     obstacle_slack_quad: float = 1e4
 
 
@@ -105,7 +105,7 @@ def obstacle_constraint(x: ca.SX, p: ca.SX, n_obstacles: int) -> ca.SX:
         xo = p[OBST_START + OBST_DIM * i + 0]
         yo = p[OBST_START + OBST_DIM * i + 1]
         ro = p[OBST_START + OBST_DIM * i + 2]
-        h.append((px - xo) ** 2 + (py - yo) ** 2 - ro ** 2)
+        h.append((px - xo) ** 2 + (py - yo) ** 2 - ro**2)
     return ca.vertcat(*h)
 
 
@@ -136,6 +136,6 @@ def export_mpccpp_model(cfg: MPCCppConfig) -> AcadosModel:
         h_parts.append(obstacle_constraint(x, p, cfg.n_obstacles))
     if h_parts:
         h = ca.vertcat(*h_parts)
-        model.con_h_expr = h            # stages 1 .. N-1
-        model.con_h_expr_e = h          # terminal stage N (stage 0 left free)
+        model.con_h_expr = h  # stages 1 .. N-1
+        model.con_h_expr_e = h  # terminal stage N (stage 0 left free)
     return model

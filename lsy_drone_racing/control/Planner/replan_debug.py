@@ -5,18 +5,18 @@ import os
 import matplotlib
 
 # CHANGE 1: Use an interactive backend (TkAgg, QtAgg, etc.) instead of 'Agg'
-matplotlib.use("TkAgg")  
+matplotlib.use("TkAgg")
 
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-DEFAULT_FRAME_WIDTH = 0.72   
-DEFAULT_FRAME_OPENING = 0.4  
-DEFAULT_R_OBSTACLE = 0.2     
-DEFAULT_CLEARANCE = 0.1      
-DEFAULT_OBSTACLE_PILLAR_R = 0.15  
-DEFAULT_OBSTACLE_HEIGHT = 2.0    
+DEFAULT_FRAME_WIDTH = 0.72
+DEFAULT_FRAME_OPENING = 0.4
+DEFAULT_R_OBSTACLE = 0.2
+DEFAULT_CLEARANCE = 0.1
+DEFAULT_OBSTACLE_PILLAR_R = 0.15
+DEFAULT_OBSTACLE_HEIGHT = 2.0
 
 
 class ReplanDebugger:
@@ -113,16 +113,27 @@ class ReplanDebugger:
         # Trajectory
         if traj is not None and len(traj):
             ax.plot(
-                traj[:, 0], traj[:, 1], traj[:, 2],
-                "-", color="tab:green", lw=2.5, label=f"trajectory ({len(traj)} pts)",
+                traj[:, 0],
+                traj[:, 1],
+                traj[:, 2],
+                "-",
+                color="tab:green",
+                lw=2.5,
+                label=f"trajectory ({len(traj)} pts)",
             )
 
         # Waypoints visualization
         if wps is not None and len(wps):
             ax.scatter(
-                wps[:, 0], wps[:, 1], wps[:, 2],
-                c="orange", marker="D", s=55, edgecolor="k",
-                depthshade=False, label=f"waypoints ({len(wps)})",
+                wps[:, 0],
+                wps[:, 1],
+                wps[:, 2],
+                c="orange",
+                marker="D",
+                s=55,
+                edgecolor="k",
+                depthshade=False,
+                label=f"waypoints ({len(wps)})",
             )
             for i, p in enumerate(wps):
                 ax.text(p[0], p[1], p[2] + 0.05, str(i), fontsize=8)
@@ -132,10 +143,12 @@ class ReplanDebugger:
 
         # Gates
         for k, (c, yaw) in enumerate(zip(gates, yaws)):
-            is_active = (k == gate_idx)
+            is_active = k == gate_idx
             outer_color = "tab:red" if is_active else "tab:blue"
             opening_color = "tab:pink" if is_active else "tab:cyan"
-            self._draw_gate(ax, c, yaw, self.frame_width / 2, outer_color, lw=2.5 if is_active else 1.8)
+            self._draw_gate(
+                ax, c, yaw, self.frame_width / 2, outer_color, lw=2.5 if is_active else 1.8
+            )
             self._draw_gate(ax, c, yaw, self.frame_opening / 2, opening_color, lw=1.5)
             label = f"G{k}*" if is_active else f"G{k}"
             ax.text(c[0], c[1], c[2] + 0.12, label, fontsize=10, color=outer_color, weight="bold")
@@ -143,15 +156,18 @@ class ReplanDebugger:
         # Obstacles
         for j, o in enumerate(obstacles):
             self._draw_cylinder(
-                ax, o, self.obstacle_pillar_r, 0.0, self.obstacle_height,
-                "tab:red", 0.55,
+                ax, o, self.obstacle_pillar_r, 0.0, self.obstacle_height, "tab:red", 0.55
             )
             self._draw_cylinder(
-                ax, o, self.r_obstacle + self.clearance, 0.0, self.obstacle_height,
-                "tab:orange", 0.12,
+                ax,
+                o,
+                self.r_obstacle + self.clearance,
+                0.0,
+                self.obstacle_height,
+                "tab:orange",
+                0.12,
             )
-            ax.text(o[0], o[1], self.obstacle_height + 0.05, f"O{j}",
-                    fontsize=10, color="tab:red")
+            ax.text(o[0], o[1], self.obstacle_height + 0.05, f"O{j}", fontsize=10, color="tab:red")
 
         # Labels and title
         ax.set_xlabel("x [m]")
@@ -175,7 +191,7 @@ class ReplanDebugger:
 
         # CHANGE 3: Display popup window without locking the thread execution loop
         plt.show(block=False)
-        plt.pause(0.1) # Small pause allows the GUI framework to catch up and draw the window
+        plt.pause(0.1)  # Small pause allows the GUI framework to catch up and draw the window
 
     @staticmethod
     def _draw_gate(ax, c, yaw, half, color, lw=2.0):

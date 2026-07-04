@@ -142,11 +142,9 @@ def _draw_wedge_gate(
     # Bottom: base at -hh, tip at -hho
     draw_prism(-hh, -hho, depth_idx=2, ax_idx=0, perp_idx=1, h_perp_base=hl, h_perp_tip=hw)
 
+
 def _draw_mpccpp_tunnel(
-    sim: Sim,
-    controller,
-    ring_rgba: NDArray | None = None,
-    corner_rgba: NDArray | None = None,
+    sim: Sim, controller, ring_rgba: NDArray | None = None, corner_rgba: NDArray | None = None
 ):
     """Draw the MPCC++ prediction tunnel: the rectangular cross-section at every
     predicted horizon node (4 corners + 4 edges) plus the longitudinal rails.
@@ -171,9 +169,9 @@ def _draw_mpccpp_tunnel(
         return
 
     if ring_rgba is None:
-        ring_rgba = np.array([0.1, 0.85, 0.95, 0.6])      # cyan edges
+        ring_rgba = np.array([0.1, 0.85, 0.95, 0.6])  # cyan edges
     if corner_rgba is None:
-        corner_rgba = np.array([1.0, 0.9, 0.0, 0.9])      # yellow corners
+        corner_rgba = np.array([1.0, 0.9, 0.0, 0.9])  # yellow corners
 
     # corners[k] = 4x3, order (+n+b, -n+b, -n-b, +n-b)
     corners = []
@@ -181,18 +179,18 @@ def _draw_mpccpp_tunnel(
         pd = np.asarray(ref.eval(th), dtype=float)
         n, b = ref.frame(th)
         W, H = ref.width(th)
-        n = np.asarray(n, float); b = np.asarray(b, float)
-        corners.append(np.array([
-            pd + W * n + H * b,
-            pd - W * n + H * b,
-            pd - W * n - H * b,
-            pd + W * n - H * b,
-        ]))
-    corners = np.array(corners)                 # (K, 4, 3)
+        n = np.asarray(n, float)
+        b = np.asarray(b, float)
+        corners.append(
+            np.array(
+                [pd + W * n + H * b, pd - W * n + H * b, pd - W * n - H * b, pd + W * n - H * b]
+            )
+        )
+    corners = np.array(corners)  # (K, 4, 3)
 
     # cross-section rectangle (4 edges) at every prediction node
     for k in range(len(corners)):
-        ring = np.vstack([corners[k], corners[k, 0]])     # closed (5,3)
+        ring = np.vstack([corners[k], corners[k, 0]])  # closed (5,3)
         draw_line(sim, ring, rgba=ring_rgba)
 
     # longitudinal rails connecting node k -> k+1 along each corner
@@ -200,7 +198,7 @@ def _draw_mpccpp_tunnel(
         draw_line(sim, corners[:, cidx, :], rgba=ring_rgba)
 
     # corner markers
-    #draw_points(sim, corners.reshape(-1, 3), rgba=corner_rgba, size=0.02)
+    # draw_points(sim, corners.reshape(-1, 3), rgba=corner_rgba, size=0.02)
 
 
 def _draw_cylinder_obstacle(
@@ -224,6 +222,7 @@ def _draw_cylinder_obstacle(
         rgba=rgba,
         cylinder=True,
     )
+
 
 def _draw_post(
     sim: Sim,
@@ -254,7 +253,7 @@ def _draw_post(
         np.array([cx, cy, z_top]),
         radius=r_post,
         rgba=rgba,
-        cylinder=False,   # rounded caps -> matches distance-to-segment keep-out
+        cylinder=False,  # rounded caps -> matches distance-to-segment keep-out
     )
 
 
@@ -338,16 +337,31 @@ def plot_tube_width_profile(
         ax.plot(thetas, H, color="tab:purple", lw=1.8, label=r"$H(\theta)$ half-height")
     if np.isfinite(W_nom):
         ax.axhline(W_nom, color="0.45", ls="--", lw=1.1)
-        ax.text(L * 0.01, W_nom, f" W_nom={W_nom:.3g}", color="0.35",
-                fontsize=9, va="bottom", ha="left")
+        ax.text(
+            L * 0.01, W_nom, f" W_nom={W_nom:.3g}", color="0.35", fontsize=9, va="bottom", ha="left"
+        )
     if gate_hw.size:
         gt = float(np.min(gate_hw))
         ax.axhline(gt, color="tab:red", ls=":", lw=1.3)
-        ax.text(L * 0.01, gt, f" gate target={gt:.3g}", color="tab:red",
-                fontsize=9, va="bottom", ha="left")
+        ax.text(
+            L * 0.01,
+            gt,
+            f" gate target={gt:.3g}",
+            color="tab:red",
+            fontsize=9,
+            va="bottom",
+            ha="left",
+        )
     ax.axhline(floor, color="k", ls="-.", lw=0.8)
-    ax.text(L * 0.55, floor, f" width() floor={floor:.3g}", color="k",
-            fontsize=8, va="bottom", ha="left")
+    ax.text(
+        L * 0.55,
+        floor,
+        f" width() floor={floor:.3g}",
+        color="k",
+        fontsize=8,
+        va="bottom",
+        ha="left",
+    )
     for k, gs in enumerate(gate_s):
         ax.axvline(gs, color="tab:red", lw=1.0, alpha=0.5)
         ax.text(gs, top * 0.04, f"G{k + 1}", color="tab:red", ha="center", fontsize=8)
@@ -370,13 +384,16 @@ def plot_tube_width_profile(
             d = (d + L / 2.0) % L - L / 2.0
         g = np.exp(-0.5 * (d / sigma) ** 2)  # (n, M)
         g_sum, g_max = g.sum(axis=1), g.max(axis=1)
-        ax2.plot(thetas, g_sum, color="tab:red", lw=2.0,
-                 label=r"$\sum_j g_j$  (current width() subtracts this)")
-        ax2.plot(thetas, g_max, color="tab:green", lw=2.0,
-                 label=r"$\max_j g_j$  (nearest-gate)")
+        ax2.plot(
+            thetas,
+            g_sum,
+            color="tab:red",
+            lw=2.0,
+            label=r"$\sum_j g_j$  (current width() subtracts this)",
+        )
+        ax2.plot(thetas, g_max, color="tab:green", lw=2.0, label=r"$\max_j g_j$  (nearest-gate)")
         ax2.axhline(1.0, color="0.4", ls="--", lw=1.0)
-        ax2.text(L * 0.01, 1.0, " over-pinch threshold = 1", color="0.35",
-                 fontsize=9, va="bottom")
+        ax2.text(L * 0.01, 1.0, " over-pinch threshold = 1", color="0.35", fontsize=9, va="bottom")
         for gs in gate_s:
             ax2.axvline(gs, color="tab:red", lw=1.0, alpha=0.5)
         ax2.set_xlim(0, L)
@@ -436,18 +453,15 @@ class DroneRacingPipeline(Controller):
         elif CONTROLLER_TYPE == "nmpc":
             self._planner = BasicPlanner(config, t_total)
             planner_dict = self._planner.plan()
-            self._controller = NMPC(
-                env_states, planner_dict, info, config, t_total, use_soft=True
-            )
+            self._controller = NMPC(env_states, planner_dict, info, config, t_total, use_soft=True)
 
         else:
             raise ValueError(
-                f"Unknown CONTROLLER_TYPE '{CONTROLLER_TYPE}'. "
-                "Choose 'mpccpp', 'mpcc', or 'nmpc'."
+                f"Unknown CONTROLLER_TYPE '{CONTROLLER_TYPE}'. Choose 'mpccpp', 'mpcc', or 'nmpc'."
             )
 
         # Debug: dump the MPCC++ tube cross-section profile to a PNG on startup.
-        #if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):
+        # if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):
         #    try:
         #        plot_tube_width_profile(self._controller._ref, "tube_width_profile.png")
         #    except Exception as exc:  # noqa: BLE001 -- never let debug plotting break a run
@@ -527,7 +541,7 @@ class DroneRacingPipeline(Controller):
         draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
 
         # Tunnel centerline for MPCC++ (yellow)
-        #if CONTROLLER_TYPE == "mpccpp":
+        # if CONTROLLER_TYPE == "mpccpp":
         #    _draw_tunnel_centerline(sim, self._controller._ref)
 
         # MPC predicted trajectory (purple dots)
@@ -536,11 +550,11 @@ class DroneRacingPipeline(Controller):
             draw_points(sim, p.reshape(1, -1), rgba=(0.58, 0.0, 0.83, 0.5), size=0.01)
 
         # MPCC++ prediction tunnel (cyan edges + yellow corners)
-        #if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):
+        # if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):
         #    _draw_mpccpp_tunnel(sim, self._controller)
         # Reference trajectory (red dots)
-        #ref_trajectory = self._controller.get_ref_traj()
-        #for p in ref_trajectory:
+        # ref_trajectory = self._controller.get_ref_traj()
+        # for p in ref_trajectory:
         #    draw_points(sim, p.reshape(1, -1), rgba=(1.0, 0.0, 0.0, 0.5), size=0.01)
 
         # Gates

@@ -89,12 +89,17 @@ class MPCC(ControllerInterface):
         self._finished = False
 
         self._cost_cfg = {
-            "q_lag": q_lag, "q_lag_peak": q_lag_peak,
-            "q_contour": q_contour, "q_contour_peak": q_contour_peak,
+            "q_lag": q_lag,
+            "q_lag_peak": q_lag_peak,
+            "q_contour": q_contour,
+            "q_contour_peak": q_contour_peak,
             "q_attitude": q_attitude,
-            "r_thrust": r_thrust, "r_roll": r_roll,
-            "r_pitch": r_pitch, "r_yaw": r_yaw,
-            "mu_speed": mu_speed, "w_speed_gate": w_speed_gate,
+            "r_thrust": r_thrust,
+            "r_roll": r_roll,
+            "r_pitch": r_pitch,
+            "r_yaw": r_yaw,
+            "mu_speed": mu_speed,
+            "w_speed_gate": w_speed_gate,
         }
 
         self.drone_params = load_params("so_rpy", config.sim.drone_model)
@@ -103,9 +108,12 @@ class MPCC(ControllerInterface):
         self._hover_thrust = self._mass * self._gravity
 
         self._gates_information = {
-            "total_length": 0.8, "total_height": 0.8,
-            "hole_width": 0.23, "hole_height": 0.23,
-            "thickness": 0.35, "margin": 0.05,
+            "total_length": 0.8,
+            "total_height": 0.8,
+            "hole_width": 0.23,
+            "hole_height": 0.23,
+            "thickness": 0.35,
+            "margin": 0.05,
         }
         self._obstacles_information = {"d_min": 0.15, "total_height": 2.0}
 
@@ -180,8 +188,7 @@ class MPCC(ControllerInterface):
             s_ext = np.linspace(traj_arc_length, traj_arc_length + self._model_traj_length, n_ext)
             pos_ext = pts_u[-1] + (s_ext - traj_arc_length)[:, None] * t_unit
             arc_spline = CubicSpline(
-                np.concatenate([arc_u, s_ext[1:]]),
-                np.concatenate([pts_u, pos_ext[1:]]),
+                np.concatenate([arc_u, s_ext[1:]]), np.concatenate([pts_u, pos_ext[1:]])
             )
         else:
             arc_spline = CubicSpline(arc_u, pts_u)
@@ -203,7 +210,7 @@ class MPCC(ControllerInterface):
         theta_s = np.arange(0.0, self._model_traj_length, self._model_arc_step)[: self._n_samples]
         s_clip = np.clip(theta_s, 0.0, float(self._arc_spline.x[-1]))
 
-        pd_vals = self._arc_spline(s_clip)               # (n, 3) positions
+        pd_vals = self._arc_spline(s_clip)  # (n, 3) positions
         tp_vals = self._arc_spline.derivative()(s_clip)  # (n, 3) ≈ unit tangents
 
         qc = np.zeros(self._n_samples)
@@ -233,14 +240,16 @@ class MPCC(ControllerInterface):
         rpy = R.from_quat(obs.qBLB).as_euler("xyz")
 
         # Build full state vector from observable state + internal controller state.
-        x0 = np.concatenate([
-            obs.pBLL,
-            obs.vBLL,
-            rpy,
-            [self.last_f_col, self.last_f_cmd],
-            self.last_rpy_cmd,
-            [self.last_theta],
-        ])
+        x0 = np.concatenate(
+            [
+                obs.pBLL,
+                obs.vBLL,
+                rpy,
+                [self.last_f_col, self.last_f_cmd],
+                self.last_rpy_cmd,
+                [self.last_theta],
+            ]
+        )
 
         # Shift warm start by one step; duplicate last entry.
         if not hasattr(self, "_x_warm"):

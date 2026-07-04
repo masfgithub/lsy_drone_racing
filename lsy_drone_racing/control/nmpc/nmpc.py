@@ -138,7 +138,11 @@ class NMPC(ControllerInterface):
             self._obstacles = get_obstacle_objects(obs.pOLL_array, self._obstacles_information)
 
             self._acados_ocp_solver, self._ocp = create_ocp_solver(
-                self._T_HORIZON, self._N, self.drone_params, self._gates, self._obstacles,
+                self._T_HORIZON,
+                self._N,
+                self.drone_params,
+                self._gates,
+                self._obstacles,
                 use_input_rate=self._use_input_rate,
                 df_cmd_rate_max=df_cmd_rate_max,
                 dr_cmd_rate_max=dr_cmd_rate_max,
@@ -185,7 +189,7 @@ class NMPC(ControllerInterface):
         self, obs: EnvState_t, info: dict | None = None, tick_offset: float = 0.0
     ) -> NDArray[np.floating]:
         """Compute the next desired collective thrust and roll/pitch/yaw."""
-        i = min(self._tick-tick_offset, self._tick_max-tick_offset)
+        i = min(self._tick - tick_offset, self._tick_max - tick_offset)
         if self._tick >= self._tick_max:
             self._finished = True
 
@@ -307,8 +311,8 @@ class NMPC(ControllerInterface):
 
     def set_ref_traj(self, planner_traj: dict):
         """Set reference trajectory from planner."""
-        self._waypoints_pos = planner_traj.positions#planner_traj["waypoints_pos"]
-        self._waypoints_vel = planner_traj.velocities#planner_traj["waypoints_vel"]
+        self._waypoints_pos = planner_traj.positions  # planner_traj["waypoints_pos"]
+        self._waypoints_vel = planner_traj.velocities  # planner_traj["waypoints_vel"]
         self._waypoints_yaw = self._waypoints_pos[:, 0] * 0
 
     def reset(self):

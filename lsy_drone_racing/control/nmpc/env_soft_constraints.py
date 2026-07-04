@@ -116,7 +116,7 @@ def create_soft_env_constraints(
     for gate in gates:
         p_win = p[offset : offset + WedgeWindow.N_PARAMS]
         penalty = penalty + gate_weight * WedgeWindow.casadi_penalty_sym(pBLL, p_win)
-        gate_center = p_win[0:3]                       # verify p_win[0:3] is [x,y,z] (see note)
+        gate_center = p_win[0:3]  # verify p_win[0:3] is [x,y,z] (see note)
         penalty = penalty + post_weight * post_penalty_sym(
             pBLL, gate_center, POST_RADIUS, gate.hole_height, gate.margin
         )
@@ -182,7 +182,7 @@ def post_penalty_sym(
     cap the penalty vanishes so the hole stays flyable.
     """
     cx, cy, cz = gate_center[0], gate_center[1], gate_center[2]
-    z_top = cz - hole_height / 2 - margin - r_post     # radius folded in so it can't reach the hole
+    z_top = cz - hole_height / 2 - margin - r_post  # radius folded in so it can't reach the hole
     L = z_top - z_floor
     t = fmin(fmax((pBLL[2] - z_floor) / L, MX(0)), MX(1))
     seg_z = z_floor + t * L

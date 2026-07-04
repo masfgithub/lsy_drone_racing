@@ -8,10 +8,7 @@ from casadi import DM, MX, cos, dot, floor, if_else, norm_2, sin, vertcat
 
 
 def _piecewise_linear_interp(
-    sym_theta: MX,
-    theta_grid: np.ndarray,
-    flat_sym: MX,
-    dim: int = 3,
+    sym_theta: MX, theta_grid: np.ndarray, flat_sym: MX, dim: int = 3
 ) -> MX:
     """CasADi-compatible piecewise linear interpolation along the arc-length axis."""
     M = len(theta_grid)
@@ -29,9 +26,7 @@ def _piecewise_linear_interp(
 
 
 def _build_mpcc_model(
-    parameters: dict,
-    model_arc_step: float,
-    model_traj_length: float,
+    parameters: dict, model_arc_step: float, model_traj_length: float
 ) -> tuple[AcadosModel, dict]:
     """Build MPCC acados model.
 
@@ -52,21 +47,31 @@ def _build_mpcc_model(
     beta_rpy = -b / (d + eps)
 
     # ── State symbols ─────────────────────────────────────────────────────────
-    px = MX.sym("px"); py = MX.sym("py"); pz = MX.sym("pz")
-    vx = MX.sym("vx"); vy = MX.sym("vy"); vz = MX.sym("vz")
-    roll = MX.sym("roll"); pitch = MX.sym("pitch"); yaw = MX.sym("yaw")
-    f_col = MX.sym("f_col"); f_cmd = MX.sym("f_cmd")
-    r_cmd = MX.sym("r_cmd"); p_cmd = MX.sym("p_cmd"); y_cmd = MX.sym("y_cmd")
+    px = MX.sym("px")
+    py = MX.sym("py")
+    pz = MX.sym("pz")
+    vx = MX.sym("vx")
+    vy = MX.sym("vy")
+    vz = MX.sym("vz")
+    roll = MX.sym("roll")
+    pitch = MX.sym("pitch")
+    yaw = MX.sym("yaw")
+    f_col = MX.sym("f_col")
+    f_cmd = MX.sym("f_cmd")
+    r_cmd = MX.sym("r_cmd")
+    p_cmd = MX.sym("p_cmd")
+    y_cmd = MX.sym("y_cmd")
     theta = MX.sym("theta")
 
     # ── Input symbols ─────────────────────────────────────────────────────────
-    df_cmd = MX.sym("df_cmd"); dr_cmd = MX.sym("dr_cmd")
-    dp_cmd = MX.sym("dp_cmd"); dy_cmd = MX.sym("dy_cmd")
+    df_cmd = MX.sym("df_cmd")
+    dr_cmd = MX.sym("dr_cmd")
+    dp_cmd = MX.sym("dp_cmd")
+    dy_cmd = MX.sym("dy_cmd")
     v_theta = MX.sym("v_theta")
 
     states = vertcat(
-        px, py, pz, vx, vy, vz, roll, pitch, yaw,
-        f_col, f_cmd, r_cmd, p_cmd, y_cmd, theta,
+        px, py, pz, vx, vy, vz, roll, pitch, yaw, f_col, f_cmd, r_cmd, p_cmd, y_cmd, theta
     )
     inputs = vertcat(df_cmd, dr_cmd, dp_cmd, dy_cmd, v_theta)
 
@@ -77,13 +82,20 @@ def _build_mpcc_model(
     az = inv_m * f_col * cos(roll) * cos(pitch) - gravity
 
     f_dyn = vertcat(
-        vx, vy, vz,
-        ax, ay, az,
-        float(a_rpy[0]) * roll  + float(beta_rpy[0]) * r_cmd,
+        vx,
+        vy,
+        vz,
+        ax,
+        ay,
+        az,
+        float(a_rpy[0]) * roll + float(beta_rpy[0]) * r_cmd,
         float(a_rpy[1]) * pitch + float(beta_rpy[1]) * p_cmd,
-        float(a_rpy[2]) * yaw   + float(beta_rpy[2]) * y_cmd,
+        float(a_rpy[2]) * yaw + float(beta_rpy[2]) * y_cmd,
         10.0 * (f_cmd - f_col),
-        df_cmd, dr_cmd, dp_cmd, dy_cmd,
+        df_cmd,
+        dr_cmd,
+        dp_cmd,
+        dy_cmd,
         v_theta,
     )
 
@@ -102,24 +114,33 @@ def _build_mpcc_model(
     model.p = params
 
     sym = {
-        "px": px, "py": py, "pz": pz,
-        "roll": roll, "pitch": pitch, "yaw": yaw,
-        "f_col": f_col, "f_cmd": f_cmd,
-        "r_cmd": r_cmd, "p_cmd": p_cmd, "y_cmd": y_cmd,
+        "px": px,
+        "py": py,
+        "pz": pz,
+        "roll": roll,
+        "pitch": pitch,
+        "yaw": yaw,
+        "f_col": f_col,
+        "f_cmd": f_cmd,
+        "r_cmd": r_cmd,
+        "p_cmd": p_cmd,
+        "y_cmd": y_cmd,
         "theta": theta,
-        "df_cmd": df_cmd, "dr_cmd": dr_cmd, "dp_cmd": dp_cmd, "dy_cmd": dy_cmd,
+        "df_cmd": df_cmd,
+        "dr_cmd": dr_cmd,
+        "dp_cmd": dp_cmd,
+        "dy_cmd": dy_cmd,
         "v_theta": v_theta,
-        "pd_list": pd_list, "tp_list": tp_list, "qc_list": qc_list,
+        "pd_list": pd_list,
+        "tp_list": tp_list,
+        "qc_list": qc_list,
         "n_samples": n_samples,
     }
     return model, sym
 
 
 def _build_cost_expr(
-    sym: dict,
-    cost_cfg: dict,
-    model_arc_step: float,
-    model_traj_length: float,
+    sym: dict, cost_cfg: dict, model_arc_step: float, model_traj_length: float
 ) -> MX:
     """Build the MPCC external stage cost expression (lag + contouring + speed)."""
     n_samples = sym["n_samples"]
@@ -150,10 +171,9 @@ def _build_cost_expr(
     )
 
     # Input smoothness cost
-    R_du = DM(np.diag([
-        cost_cfg["r_thrust"], cost_cfg["r_roll"],
-        cost_cfg["r_pitch"], cost_cfg["r_yaw"],
-    ]))
+    R_du = DM(
+        np.diag([cost_cfg["r_thrust"], cost_cfg["r_roll"], cost_cfg["r_pitch"], cost_cfg["r_yaw"]])
+    )
     smooth = du.T @ R_du @ du
 
     # Speed incentive: reward progress, penalise speed near gates
@@ -179,11 +199,17 @@ def create_ocp_solver_mpcc(
     """
     if cost_cfg is None:
         cost_cfg = {
-            "q_lag": 80.0, "q_lag_peak": 500.0,
-            "q_contour": 120.0, "q_contour_peak": 700.0,
+            "q_lag": 80.0,
+            "q_lag_peak": 500.0,
+            "q_contour": 120.0,
+            "q_contour_peak": 700.0,
             "q_attitude": 1.0,
-            "r_thrust": 0.2, "r_roll": 0.3, "r_pitch": 0.3, "r_yaw": 0.5,
-            "mu_speed": 10.0, "w_speed_gate": 9.0,
+            "r_thrust": 0.2,
+            "r_roll": 0.3,
+            "r_pitch": 0.3,
+            "r_yaw": 0.5,
+            "mu_speed": 10.0,
+            "w_speed_gate": 9.0,
         }
 
     model, sym = _build_mpcc_model(parameters, model_arc_step, model_traj_length)
@@ -204,12 +230,12 @@ def create_ocp_solver_mpcc(
     thrust_min = float(parameters["thrust_min"]) * 4.0
     thrust_max = float(parameters["thrust_max"]) * 4.0
     ocp.constraints.lbx = np.array([thrust_min, thrust_min, -1.57, -1.57, -1.57])
-    ocp.constraints.ubx = np.array([thrust_max, thrust_max,  1.57,  1.57,  1.57])
+    ocp.constraints.ubx = np.array([thrust_max, thrust_max, 1.57, 1.57, 1.57])
     ocp.constraints.idxbx = np.array([9, 10, 11, 12, 13])
 
     # Input box constraints: df_cmd, dr_cmd, dp_cmd, dy_cmd, v_theta
     ocp.constraints.lbu = np.array([-10.0, -10.0, -10.0, -10.0, 0.0])
-    ocp.constraints.ubu = np.array([ 10.0,  10.0,  10.0,  10.0, 2.0])
+    ocp.constraints.ubu = np.array([10.0, 10.0, 10.0, 10.0, 2.0])
     ocp.constraints.idxbu = np.array([0, 1, 2, 3, 4])
 
     ocp.constraints.x0 = np.zeros(nx)

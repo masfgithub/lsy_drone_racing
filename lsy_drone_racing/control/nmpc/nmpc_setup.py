@@ -47,8 +47,8 @@ def create_acados_model(parameters: dict, use_input_rate: bool = False) -> Acado
         # command STATE (U -> u_cmd) instead of a free input.
         sym = cs.SX.sym if isinstance(U, cs.SX) else cs.MX.sym
         nu0 = U.shape[0]
-        u_cmd  = sym("u_cmd", nu0)    # [r_cmd, p_cmd, y_cmd, f_cmd]  (now states)
-        du_cmd = sym("du_cmd", nu0)   # [dr_cmd, dp_cmd, dy_cmd, df_cmd]  (now inputs)
+        u_cmd = sym("u_cmd", nu0)  # [r_cmd, p_cmd, y_cmd, f_cmd]  (now states)
+        du_cmd = sym("du_cmd", nu0)  # [dr_cmd, dp_cmd, dy_cmd, df_cmd]  (now inputs)
         X_dot_sub = cs.substitute(X_dot, U, u_cmd)
         model.name = "rate_aug_mpc"
         model.x = cs.vertcat(X, u_cmd)
@@ -124,12 +124,8 @@ def create_ocp_solver(
 
     # Weights
     # Base physical-state weights (pos, rpy, vel, drpy) -- identical to baseline.
-    Q_diag = np.array(
-        [50.0, 50.0, 400.0,  1.0, 1.0, 1.0,  5.0, 5.0, 5.0,  5.0, 5.0, 5.0]
-    )
-    Q_e_diag = np.array(
-        [100.0, 100.0, 100.0,  0.1, 0.1, 0.1,  0.1, 0.1, 0.1,  0.1, 0.1, 0.1]
-    )
+    Q_diag = np.array([50.0, 50.0, 400.0, 1.0, 1.0, 1.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0])
+    Q_e_diag = np.array([100.0, 100.0, 100.0, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
     # Command penalty (reference = upright orientation + hover thrust). In the
     # baseline these weight the INPUTS; under augmentation the commands are states
     # so the same weights move onto the command-state block of Q / Q_e instead.
@@ -170,23 +166,21 @@ def create_ocp_solver(
         # Commands are now states: their MAGNITUDE limits (formerly the input box)
         # move to the STATE box on indices 12..15; the input box becomes the
         # per-command SLEW-RATE limit on [dr_cmd, dp_cmd, dy_cmd, df_cmd].
-        ocp.constraints.lbx = np.array(
-            [-0.5, -0.5, -0.5,  -0.5, -0.5, -0.5,  thrust_min]
-        )
-        ocp.constraints.ubx = np.array(
-            [0.5, 0.5, 0.5,  0.5, 0.5, 0.5,  thrust_max]
-        )
+        ocp.constraints.lbx = np.array([-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, thrust_min])
+        ocp.constraints.ubx = np.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, thrust_max])
         ocp.constraints.idxbx = np.array([3, 4, 5, 12, 13, 14, 15])
 
         def _rate_bound(val: float | None) -> float:
             return float(rate_limit_default) if val is None else float(val)
 
-        du_rate = np.array([
-            _rate_bound(dr_cmd_rate_max),   # roll-command rate
-            _rate_bound(dp_cmd_rate_max),   # pitch-command rate
-            _rate_bound(dy_cmd_rate_max),   # yaw-command rate
-            _rate_bound(df_cmd_rate_max),   # thrust-command rate
-        ])
+        du_rate = np.array(
+            [
+                _rate_bound(dr_cmd_rate_max),  # roll-command rate
+                _rate_bound(dp_cmd_rate_max),  # pitch-command rate
+                _rate_bound(dy_cmd_rate_max),  # yaw-command rate
+                _rate_bound(df_cmd_rate_max),  # thrust-command rate
+            ]
+        )
         ocp.constraints.lbu = -du_rate
         ocp.constraints.ubu = du_rate
         ocp.constraints.idxbu = np.array([0, 1, 2, 3])

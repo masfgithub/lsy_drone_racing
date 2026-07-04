@@ -1,7 +1,6 @@
-"""mpcc_model.py
--------------
-acados model for Model Predictive Contouring Control (MPCC) of a quadrotor
-(Romero, Sun, Foehn, Scaramuzza, IEEE T-RO 2022).
+"""acados model for Model Predictive Contouring Control (MPCC) of a quadrotor.
+
+Romero, Sun, Foehn, Scaramuzza, IEEE T-RO 2022.
 
 State (NX = 19), eq.(15) augmented with progress dynamics:
     x = [ p(3), q(4), v(3), w(3), f(4), theta(1), vtheta(1) ]
@@ -54,19 +53,21 @@ IDX_VTHETA = 18
 
 @dataclass
 class MPCCConfig:
+    """Physical parameters, actuator limits, horizon, and cost weights for the MPCC model."""
+
     # --- physical parameters (Table I, "RPG Quad") --------------------------
     mass: float = 0.85
     arm: float = 0.15
     inertia: tuple = (2.5e-3, 2.1e-3, 4.3e-3)
     c_tau: float = 0.022
-    drag: tuple = (0.0, 0.0, 0.0)           # identify per platform
+    drag: tuple = (0.0, 0.0, 0.0)  # identify per platform
     g: float = 9.81
 
     # --- limits (Table I) ---------------------------------------------------
     T_min: float = 0.0
     T_max: float = 7.0
     w_max: float = 10.0
-    vtheta_max: float = 30.0                # progress speed cap = progress target
+    vtheta_max: float = 30.0  # progress speed cap = progress target
     dvtheta_max: float = 60.0
     df_max: float = 200.0
 
@@ -79,11 +80,12 @@ class MPCCConfig:
     q_w: tuple = (1.0, 1.0, 1.0)
     r_dvtheta: float = 1e-2
     r_df: tuple = (1e-3, 1e-3, 1e-3, 1e-3)
-    mu: float = 1.0                          # progress weight (quadratic; tune)
+    mu: float = 1.0  # progress weight (quadratic; tune)
 
 
 # ---------------------------------------------------------------------------
-def _quat_to_rot(q):
+def _quat_to_rot(q: ca.SX) -> ca.SX:
+    """Rotation matrix from a (normalized) [w,x,y,z] quaternion."""
     qw, qx, qy, qz = q[0], q[1], q[2], q[3]
     n = ca.sqrt(qw * qw + qx * qx + qy * qy + qz * qz + 1e-12)
     qw, qx, qy, qz = qw / n, qx / n, qy / n, qz / n
@@ -94,12 +96,17 @@ def _quat_to_rot(q):
     )
 
 
-def quadrotor_dynamics(x, u, cfg: MPCCConfig):
-    q = x[IDX_Q]; v = x[IDX_V]; w = x[IDX_W]; f = x[IDX_F]
+def quadrotor_dynamics(x: ca.SX, u: ca.SX, cfg: MPCCConfig) -> ca.SX:
+    """Continuous-time quadrotor + progress dynamics, eq.(12)+(14)+(16)."""
+    q = x[IDX_Q]
+    v = x[IDX_V]
+    w = x[IDX_W]
+    f = x[IDX_F]
     vtheta = x[IDX_VTHETA]
-    dvtheta = u[0]; df = u[1:5]
+    dvtheta = u[0]
+    df = u[1:5]
 
-    m, l, ctau = cfg.mass, cfg.arm, cfg.c_tau
+    m, arm_len, ctau = cfg.mass, cfg.arm, cfg.c_tau
     Jd = ca.DM(list(cfg.inertia))
     R = _quat_to_rot(q)
 
@@ -119,30 +126,40 @@ def quadrotor_dynamics(x, u, cfg: MPCCConfig):
     )
 
     tau = ca.vertcat(
-        l / ca.sqrt(2.0) * (f[0] + f[1] - f[2] - f[3]),
-        l / ca.sqrt(2.0) * (-f[0] + f[1] + f[2] - f[3]),
+        arm_len / ca.sqrt(2.0) * (f[0] + f[1] - f[2] - f[3]),
+        arm_len / ca.sqrt(2.0) * (-f[0] + f[1] + f[2] - f[3]),
         ctau * (f[0] - f[1] + f[2] - f[3]),
     )
     Jw = ca.vertcat(Jd[0] * wx, Jd[1] * wy, Jd[2] * wz)
-    w_cross_Jw = ca.vertcat(wy * Jw[2] - wz * Jw[1],
-                            wz * Jw[0] - wx * Jw[2],
-                            wx * Jw[1] - wy * Jw[0])
-    w_dot = ca.vertcat((tau[0] - w_cross_Jw[0]) / Jd[0],
-                       (tau[1] - w_cross_Jw[1]) / Jd[1],
-                       (tau[2] - w_cross_Jw[2]) / Jd[2])
+    w_cross_Jw = ca.vertcat(
+        wy * Jw[2] - wz * Jw[1], wz * Jw[0] - wx * Jw[2], wx * Jw[1] - wy * Jw[0]
+    )
+    w_dot = ca.vertcat(
+        (tau[0] - w_cross_Jw[0]) / Jd[0],
+        (tau[1] - w_cross_Jw[1]) / Jd[1],
+        (tau[2] - w_cross_Jw[2]) / Jd[2],
+    )
 
     return ca.vertcat(v, q_dot, v_dot, w_dot, df, vtheta, dvtheta)
 
 
-def mpcc_residual(x, u, p, cfg: MPCCConfig, terminal=False):
-    """Least-squares residual for the MPCC cost (eq.17). Reads only p[0:12], so
-    it is reused unchanged by the MPCC++ model (which appends tunnel params).
-    """
-    pos = x[IDX_P]; w = x[IDX_W]
-    theta = x[IDX_THETA]; vtheta = x[IDX_VTHETA]
+def mpcc_residual(x: ca.SX, u: ca.SX, p: ca.SX, cfg: MPCCConfig, terminal: bool = False) -> ca.SX:
+    """Least-squares residual for the MPCC cost (eq.17).
 
-    pd = p[0:3]; td = p[3:6]; pdd = p[6:9]
-    theta_bar = p[9]; qc = p[10]; mu = p[11]
+    Reads only p[0:12], so it is reused unchanged by the MPCC++ model (which
+    appends tunnel params).
+    """
+    pos = x[IDX_P]
+    w = x[IDX_W]
+    theta = x[IDX_THETA]
+    vtheta = x[IDX_VTHETA]
+
+    pd = p[0:3]
+    td = p[3:6]
+    pdd = p[6:9]
+    theta_bar = p[9]
+    qc = p[10]
+    mu = p[11]
 
     s = theta - theta_bar
     pd_theta = pd + td * s + 0.5 * pdd * s * s
@@ -155,20 +172,21 @@ def mpcc_residual(x, u, p, cfg: MPCCConfig, terminal=False):
 
     Qw = ca.DM(list(cfg.q_w))
     y = ca.vertcat(
-        ca.sqrt(qc + 1e-9) * e_c,                       # contour (3)
-        ca.sqrt(cfg.q_lag) * e_l,                       # lag (1)
-        ca.sqrt(Qw[0]) * w[0],                          # body-rate reg (3)
+        ca.sqrt(qc + 1e-9) * e_c,  # contour (3)
+        ca.sqrt(cfg.q_lag) * e_l,  # lag (1)
+        ca.sqrt(Qw[0]) * w[0],  # body-rate reg (3)
         ca.sqrt(Qw[1]) * w[1],
         ca.sqrt(Qw[2]) * w[2],
-        ca.sqrt(mu + 1e-9) * (vtheta - cfg.vtheta_max), # progress (1)
+        ca.sqrt(mu + 1e-9) * (vtheta - cfg.vtheta_max),  # progress (1)
     )
     if not terminal:
-        dvtheta = u[0]; df = u[1:5]
+        dvtheta = u[0]
+        df = u[1:5]
         Rdf = ca.DM(list(cfg.r_df))
         y = ca.vertcat(
             y,
-            ca.sqrt(cfg.r_dvtheta) * dvtheta,           # input reg (1)
-            ca.sqrt(Rdf[0]) * df[0],                    # thrust-rate reg (4)
+            ca.sqrt(cfg.r_dvtheta) * dvtheta,  # input reg (1)
+            ca.sqrt(Rdf[0]) * df[0],  # thrust-rate reg (4)
             ca.sqrt(Rdf[1]) * df[1],
             ca.sqrt(Rdf[2]) * df[2],
             ca.sqrt(Rdf[3]) * df[3],
@@ -177,6 +195,7 @@ def mpcc_residual(x, u, p, cfg: MPCCConfig, terminal=False):
 
 
 def export_mpcc_model(cfg: MPCCConfig) -> AcadosModel:
+    """Build the acados model for the MPCC quadrotor: dynamics and cost."""
     x = ca.SX.sym("x", NX)
     u = ca.SX.sym("u", NU)
     p = ca.SX.sym("p", NP)
@@ -195,7 +214,8 @@ def export_mpcc_model(cfg: MPCCConfig) -> AcadosModel:
     return model
 
 
-def make_dynamics_fn(cfg: MPCCConfig):
+def make_dynamics_fn(cfg: MPCCConfig) -> ca.Function:
+    """Build a CasADi function evaluating the continuous-time dynamics f(x, u)."""
     x = ca.SX.sym("x", NX)
     u = ca.SX.sym("u", NU)
     return ca.Function("f_dyn", [x, u], [quadrotor_dynamics(x, u, cfg)])

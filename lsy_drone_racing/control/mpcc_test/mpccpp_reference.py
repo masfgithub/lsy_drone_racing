@@ -126,8 +126,14 @@ class TunnelReferencePath(ReferencePath):
             aug.append(c + delta * n)
         aug = np.array(aug)
 
-        super().__init__(aug, closed=closed, gate_indices=gidx,
-                         qc_nom=qc_nom, qc_gate=qc_gate, gate_sigma=gate_sigma)
+        super().__init__(
+            aug,
+            closed=closed,
+            gate_indices=gidx,
+            qc_nom=qc_nom,
+            qc_gate=qc_gate,
+            gate_sigma=gate_sigma,
+        )
 
         # store gate geometry (gate_s was set by the base from gidx)
         self.gate_centers = centers
@@ -165,11 +171,11 @@ class TunnelReferencePath(ReferencePath):
         i, j, a = self._segment(self._wrap(theta))
         ew = (1 - a) * self.gate_w[i] + a * self.gate_w[j]
         eh = (1 - a) * self.gate_h[i] + a * self.gate_h[j]
-        n = ew - np.dot(ew, t) * t                  # orthonormalize vs tangent
+        n = ew - np.dot(ew, t) * t  # orthonormalize vs tangent
         nn = np.linalg.norm(n)
         n = n / nn if nn > 1e-9 else _perp(t)
         b = np.cross(t, n)
-        if np.dot(b, eh) < 0:                       # keep b aligned with vertical
+        if np.dot(b, eh) < 0:  # keep b aligned with vertical
             n, b = -n, -b
         return n, b
 
@@ -180,7 +186,7 @@ class TunnelReferencePath(ReferencePath):
         d = th - self.gate_s
         if self.closed:
             d = (d + self.length / 2.0) % self.length - self.length / 2.0
-        g = np.exp(-0.5 * (d / self.tunnel_sigma) ** 2)          # per-gate bump
+        g = np.exp(-0.5 * (d / self.tunnel_sigma) ** 2)  # per-gate bump
         W = self.W_nom - float(np.sum((self.W_nom - self.gate_hw) * g))
         H = self.H_nom - float(np.sum((self.H_nom - self.gate_hh) * g))
         return max(W, 0.05), max(H, 0.05)
@@ -190,6 +196,12 @@ class TunnelReferencePath(ReferencePath):
         """Closed polygon (5,3) of gate i's opening rectangle, for plotting."""
         c, w, h = self.gate_centers[i], self.gate_w[i], self.gate_h[i]
         hw, hh = self.gate_hw[i], self.gate_hh[i]
-        return np.array([c + hw * w + hh * h, c - hw * w + hh * h,
-                         c - hw * w - hh * h, c + hw * w - hh * h,
-                         c + hw * w + hh * h])
+        return np.array(
+            [
+                c + hw * w + hh * h,
+                c - hw * w + hh * h,
+                c - hw * w - hh * h,
+                c + hw * w - hh * h,
+                c + hw * w + hh * h,
+            ]
+        )

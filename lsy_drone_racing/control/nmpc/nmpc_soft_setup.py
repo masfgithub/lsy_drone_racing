@@ -37,8 +37,8 @@ def create_acados_model(parameters: dict, use_input_rate: bool = False) -> Acado
     if use_input_rate:
         sym = cs.SX.sym if isinstance(U, cs.SX) else cs.MX.sym
         nu0 = U.shape[0]
-        u_cmd  = sym("u_cmd", nu0)    # [r_cmd, p_cmd, y_cmd, f_cmd]  (states)
-        du_cmd = sym("du_cmd", nu0)   # [dr_cmd, dp_cmd, dy_cmd, df_cmd]  (inputs)
+        u_cmd = sym("u_cmd", nu0)  # [r_cmd, p_cmd, y_cmd, f_cmd]  (states)
+        du_cmd = sym("du_cmd", nu0)  # [dr_cmd, dp_cmd, dy_cmd, df_cmd]  (inputs)
         X_dot_sub = cs.substitute(X_dot, U, u_cmd)
         model.name = "soft_rate_aug_mpc"
         model.x = cs.vertcat(X, u_cmd)
@@ -96,7 +96,7 @@ def create_ocp_solver_soft(
         obstacles=obstacles,
         gate_weight=gate_weight,
         obstacle_weight=obstacle_weight,
-        post_weight=post_weight
+        post_weight=post_weight,
     )
 
     # ── Cost: NONLINEAR_LS with penalty appended to residual ──────────────────
@@ -134,12 +134,8 @@ def create_ocp_solver_soft(
     ocp.cost.cost_type_e = "NONLINEAR_LS"
 
     # ── Weight matrices ───────────────────────────────────────────────────────
-    Q_diag = np.array(
-        [100.0, 100.0, 300.0,  0.5, 0.5, 0.5,  1.5, 1.5, 1.5,  1.5, 1.5, 1.5]
-    )
-    Q_e_diag = np.array(
-        [50.0, 50.0, 50.0,  0.1, 0.1, 0.1,  0.1, 0.1, 0.1,  0.1, 0.1, 0.1]
-    )
+    Q_diag = np.array([100.0, 100.0, 300.0, 0.5, 0.5, 0.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5])
+    Q_e_diag = np.array([50.0, 50.0, 50.0, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
     cmd_diag = np.array([0.1, 0.1, 0.1, 0.1])  # command penalty (rpy_cmd + thrust)
 
     if use_input_rate:
@@ -171,23 +167,21 @@ def create_ocp_solver_soft(
     if use_input_rate:
         # Commands are states: magnitude limits -> state box (idx 12..15); the
         # input box becomes per-command slew-rate limits on the rate inputs.
-        ocp.constraints.lbx = np.array(
-            [-0.5, -0.5, -0.5,  -0.5, -0.5, -0.5,  thrust_min]
-        )
-        ocp.constraints.ubx = np.array(
-            [0.5, 0.5, 0.5,  0.5, 0.5, 0.5,  thrust_max]
-        )
+        ocp.constraints.lbx = np.array([-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, thrust_min])
+        ocp.constraints.ubx = np.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, thrust_max])
         ocp.constraints.idxbx = np.array([3, 4, 5, 12, 13, 14, 15])
 
         def _rate_bound(val: float | None) -> float:
             return float(rate_limit_default) if val is None else float(val)
 
-        du_rate = np.array([
-            _rate_bound(dr_cmd_rate_max),
-            _rate_bound(dp_cmd_rate_max),
-            _rate_bound(dy_cmd_rate_max),
-            _rate_bound(df_cmd_rate_max),
-        ])
+        du_rate = np.array(
+            [
+                _rate_bound(dr_cmd_rate_max),
+                _rate_bound(dp_cmd_rate_max),
+                _rate_bound(dy_cmd_rate_max),
+                _rate_bound(df_cmd_rate_max),
+            ]
+        )
         ocp.constraints.lbu = -du_rate
         ocp.constraints.ubu = du_rate
         ocp.constraints.idxbu = np.array([0, 1, 2, 3])

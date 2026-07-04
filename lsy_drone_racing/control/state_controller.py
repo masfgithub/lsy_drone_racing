@@ -1,4 +1,5 @@
 """Controller driving the SplinePlanner (replans only when triggered)."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -19,9 +20,7 @@ if TYPE_CHECKING:
 class StateController(Controller):
     """Controller driving the SplinePlanner, replanning only when triggered."""
 
-    def __init__(
-        self, obs: dict[str, NDArray[np.floating]], info: dict, config: dict
-    ):
+    def __init__(self, obs: dict[str, NDArray[np.floating]], info: dict, config: dict):
         """Initialize the planner and the initial trajectory."""
         super().__init__(obs, info, config)
         self._freq = config.env.freq
@@ -31,8 +30,7 @@ class StateController(Controller):
 
         env_states = extract_env_states(obs)
         self.old_env = env_states
-        self._planner = SplinePlanner(env_states, info, config,
-                                      self._t_total, max_speed=2.0)
+        self._planner = SplinePlanner(env_states, info, config, self._t_total, max_speed=2.0)
         self._trajectory = self._planner.trajectory
         self._setpoint = env_states.pBLL.copy()
 
@@ -73,11 +71,11 @@ class StateController(Controller):
     def render_callback(self, sim: Sim):
         """Draw the current trajectory and setpoint in the simulator."""
         from crazyflow.sim.visualize import draw_line, draw_points
+
         positions = self._trajectory.positions
         step = max(1, len(positions) // 100)
         draw_line(sim, positions[::step], rgba=(0.0, 1.0, 0.0, 1.0))
-        draw_points(sim, self._setpoint.reshape(1, -1),
-                    rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
+        draw_points(sim, self._setpoint.reshape(1, -1), rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
 
     def _should_replan(self, obs: EnvState_t) -> bool:
         """Return True if the gates moved or an obstacle now blocks the trajectory."""

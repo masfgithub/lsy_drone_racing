@@ -1,7 +1,6 @@
-"""mpccpp_controller.py
---------------------
-MPCC++ controller: plain MPCCController + the gate/track tunnel + soft obstacle
-(stick) avoidance. Tunnel and obstacles are each HARD or SOFT independently
+"""MPCC++ controller: plain MPCCController + the gate/track tunnel + soft obstacle avoidance.
+
+Tunnel and obstacles are each HARD or SOFT independently
 (MPCCppConfig.tunnel_soft / .obstacle_soft); soft uses acados slacks so the OCP
 stays feasible.
 
@@ -22,6 +21,7 @@ from acados_template import AcadosOcp, AcadosOcpSolver
 
 from lsy_drone_racing.control.mpcc_test.mpcc_controller import MPCCController
 from lsy_drone_racing.control.mpcc_test.mpcc_model import NX, NY, NY_E
+from lsy_drone_racing.control.mpcc_test.mpcc_reference import ReferencePath
 from lsy_drone_racing.control.mpcc_test.mpccpp_model import (
     BNM,
     HIDX,
@@ -38,15 +38,24 @@ from lsy_drone_racing.control.mpcc_test.mpccpp_model import (
 
 
 class MPCCppController(MPCCController):
-    def __init__(self, cfg: MPCCppConfig, reference,
-                 json_file="acados_ocp_mpccpp.json", build=True):
+    """MPCC++ controller: adds a gate/track tunnel and soft stick-obstacle avoidance."""
+
+    def __init__(
+        self,
+        cfg: MPCCppConfig,
+        reference: ReferencePath,
+        json_file: str = "acados_ocp_mpccpp.json",
+        build: bool = True,
+    ):
+        """Set up obstacle state and build (or load) the acados OCP solver."""
         self._npar = num_params(cfg)
         self.n_obst = cfg.n_obstacles if cfg.use_obstacles else 0
-        self._obstacles = np.zeros((self.n_obst, OBST_DIM))   # r=0 -> inactive
+        self._obstacles = np.zeros((self.n_obst, OBST_DIM))  # r=0 -> inactive
         super().__init__(cfg, reference, json_file=json_file, build=build)
 
     # ------------------------------------------------------------ build OCP
-    def _build(self, json_file):
+    def _build(self, json_file: str) -> None:
+        """Build the acados OCP (cost, constraints, slacks) and instantiate the solver."""
         cfg = self.cfg
         ocp = AcadosOcp()
         ocp.model = export_mpccpp_model(cfg)
@@ -65,24 +74,38 @@ class MPCCppController(MPCCController):
 
         # box constraints on states / inputs (identical to plain MPCC)
         ocp.constraints.idxbx = np.array([10, 11, 12, 13, 14, 15, 16, 18])
-        ocp.constraints.lbx = np.array([-cfg.w_max, -cfg.w_max, -cfg.w_max,
-                                        cfg.T_min, cfg.T_min, cfg.T_min, cfg.T_min, 0.0])
-        ocp.constraints.ubx = np.array([cfg.w_max, cfg.w_max, cfg.w_max,
-                                        cfg.T_max, cfg.T_max, cfg.T_max, cfg.T_max, cfg.vtheta_max])
+        ocp.constraints.lbx = np.array(
+            [-cfg.w_max, -cfg.w_max, -cfg.w_max, cfg.T_min, cfg.T_min, cfg.T_min, cfg.T_min, 0.0]
+        )
+        ocp.constraints.ubx = np.array(
+            [
+                cfg.w_max,
+                cfg.w_max,
+                cfg.w_max,
+                cfg.T_max,
+                cfg.T_max,
+                cfg.T_max,
+                cfg.T_max,
+                cfg.vtheta_max,
+            ]
+        )
         ocp.constraints.idxbu = np.array([0, 1, 2, 3, 4])
-        ocp.constraints.lbu = np.array([-cfg.dvtheta_max,
-                                        -cfg.df_max, -cfg.df_max, -cfg.df_max, -cfg.df_max])
-        ocp.constraints.ubu = np.array([cfg.dvtheta_max,
-                                        cfg.df_max, cfg.df_max, cfg.df_max, cfg.df_max])
+        ocp.constraints.lbu = np.array(
+            [-cfg.dvtheta_max, -cfg.df_max, -cfg.df_max, -cfg.df_max, -cfg.df_max]
+        )
+        ocp.constraints.ubu = np.array(
+            [cfg.dvtheta_max, cfg.df_max, cfg.df_max, cfg.df_max, cfg.df_max]
+        )
 
-        x0 = np.zeros(NX); x0[3] = 1.0
+        x0 = np.zeros(NX)
+        x0[3] = 1.0
         ocp.constraints.x0 = x0
 
         # --- nonlinear constraints: tunnel (4) then obstacles (n_obstacles) --
         nh = num_h(cfg)
         if nh > 0:
             big = 1e9
-            ocp.constraints.lh = np.zeros(nh)          # h >= 0
+            ocp.constraints.lh = np.zeros(nh)  # h >= 0
             ocp.constraints.uh = big * np.ones(nh)
             ocp.constraints.lh_e = np.zeros(nh)
             ocp.constraints.uh_e = big * np.ones(nh)
@@ -105,7 +128,8 @@ class MPCCppController(MPCCController):
 
             if soft_idx:
                 idx = np.array(soft_idx)
-                zl = np.array(zl); Zl = np.array(Zl)
+                zl = np.array(zl)
+                Zl = np.array(Zl)
                 ocp.constraints.idxsh = idx
                 ocp.constraints.idxsh_e = idx
                 ocp.cost.zl, ocp.cost.zu = zl, zl
@@ -128,27 +152,29 @@ class MPCCppController(MPCCController):
         self.solver = AcadosOcpSolver(ocp, json_file=json_file)
 
     # --------------------------------------------------- obstacle management
-    def set_obstacles(self, centers, radii):
+    def set_obstacles(self, centers: np.ndarray, radii: np.ndarray) -> None:
         """Load all stick centers [(x,y) or (x,y,z)] and keep-out radii.
+
         Fewer than n_obstacles is fine; the rest stay disabled (r=0).
         """
         centers = np.atleast_2d(np.asarray(centers, dtype=float))
         radii = np.atleast_1d(np.asarray(radii, dtype=float))
         m = len(centers)
         if m > self.n_obst:
-            raise ValueError(f"{m} obstacles > n_obstacles={self.n_obst}; "
-                             f"rebuild with a larger cfg.n_obstacles")
+            raise ValueError(
+                f"{m} obstacles > n_obstacles={self.n_obst}; rebuild with a larger cfg.n_obstacles"
+            )
         obs = np.zeros((self.n_obst, OBST_DIM))
         obs[:m, 0] = centers[:, 0]
         obs[:m, 1] = centers[:, 1]
         obs[:m, 2] = radii
         self._obstacles = obs
 
-    def set_obstacle(self, center, radius):
+    def set_obstacle(self, center: np.ndarray, radius: float) -> None:
         """Convenience for the single-stick case."""
         self.set_obstacles([center], [radius])
 
-    def update_obstacle(self, i, center, radius=None):
+    def update_obstacle(self, i: int, center: np.ndarray, radius: float | None = None) -> None:
         """Overwrite stick i online (e.g. from perception). Call before solve()."""
         self._obstacles[i, 0] = center[0]
         self._obstacles[i, 1] = center[1]
@@ -156,7 +182,8 @@ class MPCCppController(MPCCController):
             self._obstacles[i, 2] = radius
 
     # ------------------------------------------------- per-node parameters
-    def _param_vector(self, theta):
+    def _param_vector(self, theta: float) -> np.ndarray:
+        """Build the parameter vector p for a single horizon node at path position theta."""
         pd = self.ref.eval(theta)
         td = self.ref.deriv1(theta)
         pdd = self.ref.deriv2(theta)
@@ -164,9 +191,16 @@ class MPCCppController(MPCCController):
         n, b = self.ref.frame(theta)
         W, H = self.ref.width(theta)
         pvec = np.zeros(self._npar)
-        pvec[0:3] = pd; pvec[3:6] = td; pvec[6:9] = pdd
-        pvec[9] = theta; pvec[10] = qc; pvec[11] = self.mu
-        pvec[NRM] = n; pvec[BNM] = b; pvec[WIDX] = W; pvec[HIDX] = H
+        pvec[0:3] = pd
+        pvec[3:6] = td
+        pvec[6:9] = pdd
+        pvec[9] = theta
+        pvec[10] = qc
+        pvec[11] = self.mu
+        pvec[NRM] = n
+        pvec[BNM] = b
+        pvec[WIDX] = W
+        pvec[HIDX] = H
         if self.cfg.use_obstacles and self.n_obst > 0:
-            pvec[OBST_START:OBST_START + OBST_DIM * self.n_obst] = self._obstacles.reshape(-1)
+            pvec[OBST_START : OBST_START + OBST_DIM * self.n_obst] = self._obstacles.reshape(-1)
         return pvec

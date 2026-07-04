@@ -1,7 +1,6 @@
-"""mpcc_example.py
----------------
-Closed-loop simulation of the plain MPCC controller on a 7-gate loop, with
-plots: a 3D drone trajectory (colored by speed) over the reference path and the
+"""Closed-loop simulation of the plain MPCC controller on a 7-gate loop.
+
+Plots: a 3D drone trajectory (colored by speed) over the reference path and the
 gates, plus speed / progress profiles.
 
 The geometric gate loop stands in for the (non-feasible) planner output. The
@@ -9,6 +8,8 @@ The geometric gate loop stands in for the (non-feasible) planner output. The
 
 Requires: numpy, scipy, casadi, acados, matplotlib.
 """
+
+from typing import Callable
 
 import numpy as np
 
@@ -22,7 +23,10 @@ from lsy_drone_racing.control.mpcc_test.mpcc_model import (
 from lsy_drone_racing.control.mpcc_test.mpcc_reference import ReferencePath
 
 
-def rk4_step(f_dyn, x, u, dt):
+def rk4_step(
+    f_dyn: Callable[[np.ndarray, np.ndarray], np.ndarray], x: np.ndarray, u: np.ndarray, dt: float
+) -> np.ndarray:
+    """Advance the state by one RK4 step of the dynamics f_dyn."""
     k1 = f_dyn(x, u)
     k2 = f_dyn(x + dt / 2 * k1, u)
     k3 = f_dyn(x + dt / 2 * k2, u)
@@ -30,23 +34,32 @@ def rk4_step(f_dyn, x, u, dt):
     return np.array(x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)).flatten()
 
 
-def simulate(n_steps=400):
-    gates = np.array([
-        [1.0, -1.0, 1.5],
-        [6.0, -6.0, 1.5],
-        [9.0, -2.0, 2.5],
-        [5.0,  3.0, 1.5],
-        [-1.0, 5.0, 1.5],
-        [-4.0, 0.0, 3.0],
-        [-2.0, -5.0, 1.5],
-    ])
-    ref = ReferencePath(gates, closed=True, gate_indices=list(range(len(gates))),
-                        qc_nom=1.0, qc_gate=120.0, gate_sigma=0.8)
+def simulate(n_steps: int = 400) -> tuple[ReferencePath, np.ndarray, dict]:
+    """Closed-loop simulation of the MPCC controller on the example gate loop."""
+    gates = np.array(
+        [
+            [1.0, -1.0, 1.5],
+            [6.0, -6.0, 1.5],
+            [9.0, -2.0, 2.5],
+            [5.0, 3.0, 1.5],
+            [-1.0, 5.0, 1.5],
+            [-4.0, 0.0, 3.0],
+            [-2.0, -5.0, 1.5],
+        ]
+    )
+    ref = ReferencePath(
+        gates,
+        closed=True,
+        gate_indices=list(range(len(gates))),
+        qc_nom=1.0,
+        qc_gate=120.0,
+        gate_sigma=0.8,
+    )
     print(f"path length = {ref.length:.2f} m")
 
     cfg = MPCCConfig()
     ctrl = MPCCController(cfg, ref)
-    ctrl.mu = 1.0   # progress weight (quadratic): raise to go faster
+    ctrl.mu = 1.0  # progress weight (quadratic): raise to go faster
 
     f_dyn = make_dynamics_fn(cfg)
     p0 = ref.eval(0.0)
@@ -67,16 +80,21 @@ def simulate(n_steps=400):
             print(f"[{i}] solver status {res['status']}")
         x = rk4_step(f_dyn, x, res["u0"], cfg.dt)
         if i % 20 == 0:
-            print(f"t={i*cfg.dt:5.2f}s  theta={x[IDX_THETA]:6.2f}m "
-                  f"vtheta={x[IDX_VTHETA]:5.2f}m/s  |v|={np.linalg.norm(x[7:10]):5.2f}m/s")
+            print(
+                f"t={i * cfg.dt:5.2f}s  theta={x[IDX_THETA]:6.2f}m "
+                f"vtheta={x[IDX_VTHETA]:5.2f}m/s  |v|={np.linalg.norm(x[7:10]):5.2f}m/s"
+            )
 
     log = {k: np.array(v) for k, v in log.items()}
-    print(f"\ncovered {x[IDX_THETA]:.1f} m (~{x[IDX_THETA]/ref.length:.2f} laps) "
-          f"in {n_steps*cfg.dt:.1f} s")
+    print(
+        f"\ncovered {x[IDX_THETA]:.1f} m (~{x[IDX_THETA] / ref.length:.2f} laps) "
+        f"in {n_steps * cfg.dt:.1f} s"
+    )
     return ref, gates, log
 
 
-def plot(ref, gates, log, save_prefix="mpcc"):
+def plot(ref: ReferencePath, gates: np.ndarray, log: dict, save_prefix: str = "mpcc") -> None:
+    """Plot the 3D trajectory over the reference path and gates, and time profiles."""
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
@@ -91,12 +109,22 @@ def plot(ref, gates, log, save_prefix="mpcc"):
     ax = fig.add_subplot(111, projection="3d")
     ax.plot(ctr[:, 0], ctr[:, 1], ctr[:, 2], "k--", lw=1.0, alpha=0.5, label="reference path")
     sc = ax.scatter(pos[:, 0], pos[:, 1], pos[:, 2], c=spd, cmap="viridis", s=8)
-    ax.scatter(gates[:, 0], gates[:, 1], gates[:, 2], c="red", marker="s", s=80,
-               depthshade=False, label="gates")
+    ax.scatter(
+        gates[:, 0],
+        gates[:, 1],
+        gates[:, 2],
+        c="red",
+        marker="s",
+        s=80,
+        depthshade=False,
+        label="gates",
+    )
     for j, g in enumerate(gates):
-        ax.text(g[0], g[1], g[2] + 0.3, f"G{j+1}", color="red", fontsize=8)
+        ax.text(g[0], g[1], g[2] + 0.3, f"G{j + 1}", color="red", fontsize=8)
     fig.colorbar(sc, ax=ax, label="speed [m/s]", shrink=0.6, pad=0.1)
-    ax.set_xlabel("x [m]"); ax.set_ylabel("y [m]"); ax.set_zlabel("z [m]")
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    ax.set_zlabel("z [m]")
     ax.set_title("MPCC: drone trajectory (colored by speed)")
     ax.legend(loc="upper left")
     _set_equal_3d(ax, pos)
@@ -109,14 +137,19 @@ def plot(ref, gates, log, save_prefix="mpcc"):
     a.plot(ctr[:, 0], ctr[:, 1], "k--", lw=1, alpha=0.5)
     a.scatter(pos[:, 0], pos[:, 1], c=spd, cmap="viridis", s=8)
     a.scatter(gates[:, 0], gates[:, 1], c="red", marker="s", s=60)
-    a.set_xlabel("x [m]"); a.set_ylabel("y [m]"); a.set_title("top view (XY)")
+    a.set_xlabel("x [m]")
+    a.set_ylabel("y [m]")
+    a.set_title("top view (XY)")
     a.set_aspect("equal", adjustable="datalim")
 
-    axs[0, 1].plot(log["t"], log["speed"]); axs[0, 1].set_title("speed |v| [m/s]")
+    axs[0, 1].plot(log["t"], log["speed"])
+    axs[0, 1].set_title("speed |v| [m/s]")
     axs[0, 1].set_xlabel("t [s]")
-    axs[1, 0].plot(log["t"], log["vtheta"]); axs[1, 0].set_title("progress speed vtheta [m/s]")
+    axs[1, 0].plot(log["t"], log["vtheta"])
+    axs[1, 0].set_title("progress speed vtheta [m/s]")
     axs[1, 0].set_xlabel("t [s]")
-    axs[1, 1].plot(log["t"], log["theta"]); axs[1, 1].set_title("progress theta [m]")
+    axs[1, 1].plot(log["t"], log["theta"])
+    axs[1, 1].set_title("progress theta [m]")
     axs[1, 1].set_xlabel("t [s]")
     for a in axs.flat:
         a.grid(alpha=0.3)
@@ -126,8 +159,10 @@ def plot(ref, gates, log, save_prefix="mpcc"):
     plt.show()
 
 
-def _set_equal_3d(ax, pts):
-    mins = pts.min(0); maxs = pts.max(0)
+def _set_equal_3d(ax: object, pts: np.ndarray) -> None:
+    """Set equal-aspect 3D axis limits covering all points, on a 3D axis."""
+    mins = pts.min(0)
+    maxs = pts.max(0)
     c = (mins + maxs) / 2.0
     r = (maxs - mins).max() / 2.0 + 1.0
     ax.set_xlim(c[0] - r, c[0] + r)
@@ -135,7 +170,8 @@ def _set_equal_3d(ax, pts):
     ax.set_zlim(max(0, c[2] - r), c[2] + r)
 
 
-def main():
+def main() -> None:
+    """Run the closed-loop simulation and plot the results."""
     ref, gates, log = simulate(n_steps=400)
     try:
         plot(ref, gates, log)
