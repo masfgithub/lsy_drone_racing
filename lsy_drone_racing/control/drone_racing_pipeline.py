@@ -6,25 +6,27 @@ TBD specify more in detail.
 from __future__ import annotations  # Python 3.10 type hints
 
 from typing import TYPE_CHECKING
-from lsy_drone_racing.control.nmpc.env_soft_constraints import POST_RADIUS
 
 import numpy as np
 from crazyflow.sim.visualize import draw_capsule, draw_line, draw_points
 
 from lsy_drone_racing.control.basic_planner import BasicPlanner
-from lsy_drone_racing.control.basic_planner_mpccpp import BasicPlannerMPCCpp
-#from lsy_drone_racing.control.SplinePlanner_2 import SplinePlanner
-from lsy_drone_racing.control.gate_spline_planner import GateCenterSplinePlanner
 from lsy_drone_racing.control.controller import Controller
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.mpcc.mpcc import MPCC
 from lsy_drone_racing.control.mpcc.mpccpp import MPCCpp
 from lsy_drone_racing.control.nmpc.nmpc import NMPC
-from lsy_drone_racing.control.Planner.smart_planner import SplinePlanner
-from lsy_drone_racing.control.Planner.replan_debug import ReplanDebugger
 
 # Active controller: "mpccpp" | "mpcc" | "nmpc"
 CONTROLLER_TYPE = "mpccpp"
+
+# Active planner: "Smart" | "Simple"
+PLANNER_TYPE = "Smart"
+
+if PLANNER_TYPE == "Smart":
+    from lsy_drone_racing.control.Planner.smart_planner import SplinePlanner
+elif PLANNER_TYPE == "Simple":
+    from lsy_drone_racing.control.SplinePlanner_2 import SplinePlanner
 
 if TYPE_CHECKING:
     from crazyflow import Sim
@@ -405,8 +407,6 @@ class DroneRacingPipeline(Controller):
 
         t_total = 12
         env_states = extract_env_states(obs)
-        self.nominal_gates_position = env_states.pTLL_array
-        self.nominal_obstacles_position = env_states.pOLL_array
         self._tick = 0
         self._freq = config.env.freq
         self._finished = False
@@ -420,29 +420,9 @@ class DroneRacingPipeline(Controller):
             # horizon (t_remaining <= 0), so keep that horizon comfortably above
             # the real flight time. Since MPCC++ ignores the timing, a large
             # value only makes the sampled path denser -- the geometry is identical.
-            t_plan = 12.0
-            # GateCenterSplinePlanner: re-roots at the current drone position,
-            # leaves it along the current motion (velocity on a replan, thrust at
-            # the start), threads each gate centre on its normal, routes around
-            # obstacles (perpendicular left/right push, fewest-violation pick), and
-            # keeps the line clear of the gate frames -- re-threading the hole when
-            # the racing line loops back past a gate it already passed. MPCC++ uses
-            # only the path geometry (its v_theta sets the speed), so this line
-            # becomes the tunnel centerline directly.
-            #self._planner = GateCenterSplinePlanner(
-            #    env_states, info, config, t_plan, max_speed=2.0
-            #)
-            self._planner = SplinePlanner(
-                env_states, info, config, t_plan
-            )
+            self._planner = SplinePlanner(env_states, info, config, t_total)
             trajectory = self._planner.plan(env_states, 0.0)
-            self._debugger = ReplanDebugger(output_dir="replan_debug")
-            #self._debugger.dump(env_states, trajectory, self._planner,
-            #                    tag="initial", t_elapsed=0.0)
-            # plan() itself pops up / refreshes the diagnostic figure after every
-            # plan (init and each replan) when SHOW_PLAN_PLOT is on -- nothing to do
-            # here. Toggle that flag in gate_spline_planner.py to enable/disable.
-            self._controller = MPCCpp(env_states, trajectory, info, config, t_plan)
+            self._controller = MPCCpp(env_states, trajectory, info, config, t_total)
             # Replan trigger bookkeeping.
             self.nominal_gates_position = env_states.pTLL_array
             self.nominal_obstacles_position = env_states.pOLL_array
@@ -490,8 +470,6 @@ class DroneRacingPipeline(Controller):
                 self._controller.replan_reference(trajectory, env_states)
                 self._force_replan = False
                 print("[MPCC++] Replanned -> tube + theta reset")
-                #self._debugger.dump(env_states, trajectory, self._planner,
-                #        t_elapsed=self._tick / self._freq)
             return self._controller.control(env_states, info)
 
         # MPCC / NMPC: original flow.
@@ -545,17 +523,17 @@ class DroneRacingPipeline(Controller):
     def render_callback(self, sim: Sim):
         """Visualize the planned path, MPC predictions, gates, and obstacles."""
         # Planned path (green)
-        #trajectory = self._planner.get_pos_traj()
-        #draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
+        trajectory = self._planner.get_pos_traj()
+        draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
 
         # Tunnel centerline for MPCC++ (yellow)
         #if CONTROLLER_TYPE == "mpccpp":
         #    _draw_tunnel_centerline(sim, self._controller._ref)
 
         # MPC predicted trajectory (purple dots)
-        #pred_trajectory = self._controller.get_predicted_traj()
-        #for p in pred_trajectory:
-        #    draw_points(sim, p.reshape(1, -1), rgba=(0.58, 0.0, 0.83, 0.5), size=0.01)
+        pred_trajectory = self._controller.get_predicted_traj()
+        for p in pred_trajectory:
+            draw_points(sim, p.reshape(1, -1), rgba=(0.58, 0.0, 0.83, 0.5), size=0.01)
 
         # MPCC++ prediction tunnel (cyan edges + yellow corners)
         #if CONTROLLER_TYPE == "mpccpp" and hasattr(self._controller, "_ref"):

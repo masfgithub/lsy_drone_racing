@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.interpolate import CubicSpline
 
-from lsy_drone_racing.control.Planner.planner import CLEARANCE, FRAME_WIDTH, Planner, Trajectory
+from lsy_drone_racing.control.planner import CLEARANCE, FRAME_WIDTH, Planner, Trajectory
 
 _MAX_AVOID_ITER = 6     # re-check loop cap
 _OBST_RADIUS    = 0.15  # pillar radius (m), matches _check_obsticle
@@ -14,6 +14,7 @@ _SAMPLE_DS      = 0.03  # collision-check spacing (m)
 _LEAD = 0
 _MAX_GATE_ITER = 2
 _GATE_OFFSET = 0.5
+PUSH_GAIN = 1.1
 
 if TYPE_CHECKING:
     from lsy_drone_racing.control.env_obs import EnvState_t
@@ -27,7 +28,8 @@ class SplinePlanner(Planner):
         obs: EnvState_t,
         info: dict,
         config: dict,
-        t_total: float
+        t_total: float,
+        max_speed: float = 2.0
     ):
         """Initialize SplinePlanner.
         
@@ -40,6 +42,7 @@ class SplinePlanner(Planner):
         """
         super().__init__(obs, info, config)
         self._t_total = t_total
+        self.max_speed = max_speed
 
     def plan(
             self,
@@ -91,8 +94,8 @@ class SplinePlanner(Planner):
         pGLL_array, y_GBL_array = self._gate(obs)
 
         # Parameter defined to set helping points in front and behind the gates
-        Distance = 0.6
-        lead_dist = 0.25
+        Distance = 0.3
+        lead_dist = 0.1
 
         # Create waypoint matrix
         p_WLL_array = pDLL
@@ -106,7 +109,7 @@ class SplinePlanner(Planner):
         nf = np.linalg.norm(fwd)
         if nf > 1e-6:
             lead = pDLL + lead_dist * (fwd / nf)
-            #p_WLL_array = np.vstack([p_WLL_array, lead])
+            p_WLL_array = np.vstack([p_WLL_array, lead])
 
         pPrevLL = np.zeros(3)
         pNextLL = np.zeros(3)
@@ -116,7 +119,7 @@ class SplinePlanner(Planner):
         bool_prev_waypoint = np.linalg.norm(pDLL - pGLL_array[0]) > 1.2*Distance
 
         for i in range(len(pGLL_array)):
-            if (i == 0)&(bool_prev_waypoint):
+            if (bool_prev_waypoint):
                 pPrevLL[0] = pGLL_array[i,0] - Distance*np.cos(y_GBL_array[i])
                 pPrevLL[1] = pGLL_array[i,1] - Distance*np.sin(y_GBL_array[i])
                 pPrevLL[2] = pGLL_array[i,2]
@@ -136,6 +139,11 @@ class SplinePlanner(Planner):
         p_WLL_array = self._detour_gates1(obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed)
 
         p_WLL_array = self._avoid_hindrance(obs, pGLL_array, y_GBL_array, p_WLL_array, t_elapsed)
+
+
+        #p_WLL_array = self._detour(obs, p_WLL_array, pGLL_array, y_GBL_array, t_elapsed)
+
+        self._waypoints = np.asarray(p_WLL_array, dtype=float).copy()
 
         first_distance = np.linalg.norm(pDLL - p_WLL_array)
 
@@ -189,104 +197,6 @@ class SplinePlanner(Planner):
 
         spline_ref_array = CubicSpline(t_gates, p_WLL_array, axis=0)
         return spline_ref_array, t_sample
-    
-    def _avoid_hindrance1(
-            self,
-            obs: EnvState_t,
-            pGLL_array: np.ndarray,
-            y_GBL_array: np.array,
-            p_WLL_array: np.ndarray,
-            t_elapsed: float
-        ) -> np.ndarray:
-        """Check if current waypoints hit obsticles or gate frames and replan.
-        
-        Args:
-            obs:                Environment state observation.
-            pGLL_array:         N dim array with gate centres.
-            y_GBL_array:        Array with gate yaws.
-            p_WLL_array:        N-dim array of waypoints for the cubic spline.
-            t_elapsed:          Time passed during the race.
-
-        Returns:
-            p_WLL_array:        N-dim array of waypoints for the cubic spline.
-        """
-        # Build spline
-        #spline_test_array, t_sample = self._create_spline(p_WLL_array, t_elapsed)
-        #t_sample_test = np.linspace(0, t_sample[-1], len(t_sample)*4)
-        #p_test_array = spline_test_array(t_sample_test)
-
-        #is_inside_frame = np.zeros(len(p_test_array), dtype=bool)
-        #n_gates = len(pGLL_array)
-        #d_G = np.zeros((len(p_test_array), n_gates))
-
-        pOLL_array = obs.pOLL_array
-        #d_O = np.zeros((len(p_test_array), n_obsticles))
-        #seg_d = np.linalg.norm(np.diff(p_test_array, axis=0), axis=1)
-        #s_dense = np.concatenate([[0.0], np.cumsum(seg_d)])
-        #seg = np.linalg.norm(np.diff(p_WLL_array, axis=0), axis=1)
-        #s_wp = np.concatenate([[0.0], np.cumsum(seg)])
-
-        spline_test_array, t_sample = self._create_spline(p_WLL_array, t_elapsed)
-        t_dense = np.linspace(0, t_sample[-1], len(t_sample) * 4)
-        p_test_array = spline_test_array(t_dense)
-
-        # curve arc-length of every dense sample
-        seg_d = np.linalg.norm(np.diff(p_test_array, axis=0), axis=1)
-        s_dense = np.concatenate([[0.0], np.cumsum(seg_d)])
-
-        # the parameter values the sparse waypoints were splined at.
-        # _create_spline uses np.linspace(0, t_remaining, len(p_WLL_array)) for the knots,
-        # so reconstruct those and map them onto the dense curve's arc-length:
-        t_knots = np.linspace(t_dense[0], t_dense[-1], len(p_WLL_array))
-        s_wp = np.interp(t_knots, t_dense, s_dense)     # waypoint positions on the SAME ruler
-
-        detours = []
-        inside = False
-        entry_i = None
-        entry_c = None
-        entry_push = None
-
-        for i, p in enumerate(p_test_array):
-            is_inside_frame, *_ = self._check_gate(p_test_array[i], pGLL_array, y_GBL_array)
-            is_inside_obstacle, c_xy, push_obst = self._check_obsticle(p_test_array[i], pOLL_array)
-            if (is_inside_obstacle):
-                if not inside:
-                    inside = True
-                    entry_i = i
-                    entry_c = c_xy
-                    entry_push = push_obst
-                continue
-            if inside:
-                inside = False
-                p_in, p_out = p_test_array[entry_i], p
-                e_in = p_in[:2] - entry_c
-                e_out = p_out[:2] - entry_c
-                bis = e_in + e_out
-                nb = np.linalg.norm(bis)
-                new_xy = entry_c + entry_push * bis / nb
-                new_z = (p_in[2] + p_out[2]) / 2
-                s_mid = 0.5 * (s_dense[entry_i] + s_dense[i])
-                detours.append((s_mid, np.array([new_xy[0], new_xy[1], new_z])))
-
-        if not detours:
-            return p_WLL_array
-
-        out = []
-        di = 0
-        for k, wp in enumerate(p_WLL_array):
-            while di < len(detours) and detours[di][0] <= s_wp[k]:
-                out.append(detours[di][1])
-                di += 1
-            hit, _, _ = self._check_obsticle(wp, pOLL_array)
-            if hit:
-                continue
-            out.append(wp)
-        while di < len(detours):
-            out.append(detours[di][1])
-            di += 1
-        print(np.asarray(out))
-
-        return np.asarray(out)
 
 
     def _avoid_hindrance(
@@ -409,7 +319,7 @@ class SplinePlanner(Planner):
                 if is_hit:
                     n_passed = int(np.searchsorted(t_wps, t_dense[i]))
                     d = self._push_dir_frame1(local, yaw)
-                    detour = c + base_push * d
+                    detour = c + 1.5*base_push * d
                     detours.append((n_passed, detour))
                     hit = True
                     break
@@ -496,4 +406,5 @@ class SplinePlanner(Planner):
             wps.insert(idx, pt)
         new_p_WLL_array = np.array(wps)
         return new_p_WLL_array
+    
     
