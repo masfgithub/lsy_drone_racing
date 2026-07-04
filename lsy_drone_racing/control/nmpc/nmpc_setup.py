@@ -1,4 +1,9 @@
-"""TBD: for Ruff."""
+"""Builds the acados model and OCP for NMPC with hard gate/obstacle constraints.
+
+Unlike `nmpc_soft_setup.py`, which folds gate/obstacle violations into the cost as
+a soft penalty, this module enforces them as hard nonlinear constraints (via
+`create_env_constraints`).
+"""
 
 import casadi as cs
 import numpy as np

@@ -197,14 +197,7 @@ class Planner(ABC):
         return True, pOLL_array[o, :2], r_obstacle
 
     def get_pos_traj(self) -> np.ndarray:
-        """TBD: for Ruff.
-
-        Args:
-            TBD: for Ruff.
-
-        Returns:
-            TBD: for Ruff.
-        """
+        """Return the planned position samples (call plan() first)."""
         return self.trajectory.positions
 
     def setpoint_at(self, t: float, lookahead_t: float = 0.15) -> np.ndarray:

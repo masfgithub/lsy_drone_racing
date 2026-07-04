@@ -1,6 +1,11 @@
-"""This module implements the pipeline for the drone racing.
+"""Top-level controller wiring a planner and an MPC controller together.
 
-TBD specify more in detail.
+`DroneRacingPipeline` selects a planner/controller pair based on `CONTROLLER_TYPE`
+("mpccpp", "mpcc", or "nmpc"), builds them from the initial observation, and on
+every `compute_control()` call forwards the current observation to the controller
+(replanning first if a gate/obstacle moved, for the MPCC++ path). The rest of the
+module holds simulator-visualization helpers (drawing gates, obstacles, the
+MPCC++ tunnel, etc.) used by the pipeline's `render_callback`.
 """
 
 from __future__ import annotations  # Python 3.10 type hints

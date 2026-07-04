@@ -324,7 +324,7 @@ class NMPC(ControllerInterface):
         self._tick = tick
 
     def get_states(self):
-        """Return states (TBD)."""
+        """Unused; kept for interface compatibility."""
         return
 
     def get_predicted_traj(self) -> np.ndarray:

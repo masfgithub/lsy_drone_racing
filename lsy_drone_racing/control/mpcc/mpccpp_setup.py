@@ -163,7 +163,10 @@ def _build_mpccpp_model(
     R_du = DM(
         np.diag([cost_cfg["r_thrust"], cost_cfg["r_roll"], cost_cfg["r_pitch"], cost_cfg["r_yaw"]])
     )
-    # TBD: qc is the speed weight, adjust that
+    # qc in [0, 1] is the gate-proximity bump (from the tunnel reference): 0 away from
+    # gates, ~1 at a gate. It scales the *_peak lag/contour weights below and the
+    # speed-vs-progress trade-off in `speed`, so tracking tightens and the drone is
+    # discouraged from overspeeding right around each gate.
     track = (
         (cost_cfg["q_lag"] + cost_cfg["q_lag_peak"] * qc) * e_lag * e_lag
         + (cost_cfg["q_contour"] + cost_cfg["q_contour_peak"] * qc) * dot(e_cnt, e_cnt)

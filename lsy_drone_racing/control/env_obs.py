@@ -11,7 +11,7 @@ from numpy.typing import NDArray
 
 @dataclass
 class EnvState_t:
-    """TBD: State container for environment observations."""
+    """Standardized container for the drone/gate/obstacle state extracted from an observation."""
 
     pBLL: np.ndarray = field(
         default_factory=lambda: np.zeros(3)
@@ -51,8 +51,10 @@ def extract_env_states(obs: dict[str, NDArray[np.floating]]) -> EnvState_t:
     states.pTLL_index = obs["target_gate"]
     states.qTLT_array = obs["gates_quat"]
     states.pOLL_array = obs["obstacles_pos"]
-    states.hT = 0.3  # for now 30 cm, TBD: adjust
-    states.lT = 0.3  # for now 30 cm, TBD: adjust
-    states.wT = 0.02  # for now 2 cm, TBD: adjust
+    # Gate dimensions are not part of the observation dict, so fall back to fixed
+    # nominal values (height/length 30 cm, frame width 2 cm) until the env exposes them.
+    states.hT = 0.3
+    states.lT = 0.3
+    states.wT = 0.02
 
     return states

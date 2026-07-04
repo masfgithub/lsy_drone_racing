@@ -1,4 +1,4 @@
-"""<For RUFF: Brief description of what this module does>."""
+"""Fixed-waypoint cubic-spline planner used as the reference for the MPC/NMPC controllers."""
 
 from __future__ import annotations  # Python 3.10 type hints
 
@@ -7,18 +7,16 @@ from scipy.interpolate import CubicSpline
 
 
 class BasicPlanner:
-    """MPC using the collective thrust and attitude interface."""
+    """Plans a time-parameterized cubic-spline trajectory through a hand-tuned waypoint set."""
 
     def __init__(self, config: dict, t_total: int):
-        """TBD: for Ruff.
+        """Store the race configuration and precompute the time grid for the waypoints.
 
         Args:
-            config: TBD for rust.
-            t_total: TBD for ruff.
-            TBD: for Ruff.
-
-        Returns:
-            TBD: for Ruff.
+            config: The race configuration; only `config.env.freq` is used, to determine
+                how densely the spline is sampled.
+            t_total: Total assumed trajectory duration in seconds, spread evenly across
+                the waypoints to build the spline's time knots.
         """
         # Same waypoints as in the trajectory controller. Determined by trial and error.
         self._waypoints = np.array(
@@ -40,17 +38,15 @@ class BasicPlanner:
         self._t = np.linspace(0, self._t_total, len(self._waypoints))
 
     def replan(self) -> dict:
-        """TBD: do nothing."""
+        """No-op: the waypoints are fixed, so replanning just returns the existing trajectory."""
         return self.get_trajectories()
 
     def plan(self) -> dict:
-        """TBD: for Ruff.
-
-        Args:
-            TBD: for Ruff.
+        """Fit the position/velocity splines through the waypoints and densely sample them.
 
         Returns:
-            TBD: for Ruff.
+            The planner dict from `get_trajectories()` (splines + dense position/velocity
+            samples).
         """
         self._des_pos_spline = CubicSpline(self._t, self._waypoints)
         self._des_vel_spline = self._des_pos_spline.derivative()
@@ -66,13 +62,11 @@ class BasicPlanner:
         return self.get_trajectories()
 
     def get_trajectories(self) -> dict:
-        """TBD: for Ruff.
-
-        Args:
-            TBD: for Ruff.
+        """Bundle the fitted splines and their dense samples into the planner output dict.
 
         Returns:
-            TBD: for Ruff.
+            Dict with keys "des_pos_spline", "des_vel_spline", "waypoints_pos",
+            "waypoints_vel", consumed by the MPC/NMPC controllers.
         """
         planner_dict = {
             "des_pos_spline": self._des_pos_spline,
@@ -84,12 +78,5 @@ class BasicPlanner:
         return planner_dict
 
     def get_pos_traj(self) -> np.ndarray:
-        """TBD: for Ruff.
-
-        Args:
-            TBD: for Ruff.
-
-        Returns:
-            TBD: for Ruff.
-        """
+        """Return 100 position samples of the planned spline, evenly spaced over its duration."""
         return self._des_pos_spline(np.linspace(0, self._t_total, 100))

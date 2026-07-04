@@ -1,4 +1,9 @@
-"""TBD: for Ruff."""
+"""Builds the acados model and OCP for NMPC with soft (penalty-in-cost) gate/obstacle constraints.
+
+Unlike `nmpc_setup.py`, which enforces gates/obstacles as hard nonlinear constraints,
+this module folds their violation penalty directly into the NONLINEAR_LS cost residual
+(via `create_soft_env_constraints`), so the solver never becomes infeasible.
+"""
 
 import casadi as cs
 import numpy as np
