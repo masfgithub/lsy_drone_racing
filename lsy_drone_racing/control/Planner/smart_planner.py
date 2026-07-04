@@ -4,7 +4,12 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 
 from lsy_drone_racing.control.env_obs import EnvState_t
-from lsy_drone_racing.control.Planner.smart_planner_base import FRAME_WIDTH, R_OBSTACLE, Planner, Trajectory
+from lsy_drone_racing.control.Planner.smart_planner_base import (
+    FRAME_WIDTH,
+    R_OBSTACLE,
+    Planner,
+    Trajectory,
+)
 
 _MAX_AVOID_ITER = 20  # maximum number of iterations to avoid obstacles
 
@@ -1621,7 +1626,6 @@ class SplinePlanner(Planner):
             block:        If True, pause script until window closed.
         """
         import matplotlib.pyplot as plt
-
         from lsy_drone_racing.control.Planner.planner import (
             CLEARANCE,
             FRAME_OPENING,

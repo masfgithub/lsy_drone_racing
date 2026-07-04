@@ -20,9 +20,9 @@ from dataclasses import dataclass, field
 import matplotlib.pyplot as plt  # NOTE: don't force a backend here, so plt.show() can open a window
 import numpy as np
 import plotly.graph_objects as go
+from lsy_drone_racing.control.Planner.planner import CLEARANCE, FRAME_OPENING, FRAME_WIDTH
 from scipy.spatial.transform import Rotation as R
 
-from lsy_drone_racing.control.Planner.planner import CLEARANCE, FRAME_OPENING, FRAME_WIDTH
 from lsy_drone_racing.control.Planner.smart_planner import SplinePlanner
 
 try:
@@ -31,6 +31,8 @@ except Exception:  # crazyflow chain unavailable -> local stand-in
 
     @dataclass
     class EnvState_t:
+        """Fallback observation state, used when the real EnvState_t is unavailable."""
+
         pBLL: np.ndarray = field(default_factory=lambda: np.zeros(3))
         vBLL: np.ndarray = field(default_factory=lambda: np.zeros(3))
         wBLL: np.ndarray = field(default_factory=lambda: np.zeros(3))
@@ -51,7 +53,8 @@ HOLE_H = 0.23
 MARGIN = 0.05
 
 
-def make_obs(start, gates, obstacles) -> "EnvState_t":
+def make_obs(start: np.ndarray, gates: list, obstacles: list) -> "EnvState_t":
+    """Build a minimal EnvState_t from a start position, gate list, and obstacle list."""
     obs = EnvState_t()
     obs.pBLL = np.asarray(start, float)
     obs.vBLL = np.zeros(3)
@@ -66,9 +69,10 @@ def make_obs(start, gates, obstacles) -> "EnvState_t":
     return obs
 
 
-def get_set_waypoints(planner, obs):
-    """Exact waypoints if the planner exposes self._waypoints, else reconstruct
-    the start + prev/gate/next set the way _build_waypoints does.
+def get_set_waypoints(planner: object, obs: "EnvState_t") -> np.ndarray:
+    """Exact waypoints if the planner exposes self._waypoints, else reconstruct them.
+
+    Reconstructs the start + prev/gate/next set the way _build_waypoints does.
     """
     wps = getattr(planner, "_waypoints", None)
     if wps is not None and len(wps):
@@ -86,7 +90,10 @@ def get_set_waypoints(planner, obs):
 
 
 # ---- plotly trace builders --------------------------------------------------
-def line_trace(pts, name, color, width=5, dash="solid"):
+def line_trace(
+    pts: np.ndarray, name: str, color: str, width: int = 5, dash: str = "solid"
+) -> go.Scatter3d:
+    """Build a Plotly 3D line trace through the given points."""
     pts = np.asarray(pts)
     return go.Scatter3d(
         x=pts[:, 0],
@@ -98,7 +105,8 @@ def line_trace(pts, name, color, width=5, dash="solid"):
     )
 
 
-def gate_frame_trace(c, yaw, half, color, name):
+def gate_frame_trace(c: np.ndarray, yaw: float, half: float, color: str, name: str) -> go.Scatter3d:
+    """Build a Plotly 3D trace outlining a square gate frame."""
     w = np.array([-np.sin(yaw), np.cos(yaw), 0.0])
     zz = np.array([0.0, 0.0, 1.0])
     corners = [(-1, -1), (1, -1), (1, 1), (-1, 1), (-1, -1)]
@@ -114,7 +122,10 @@ def gate_frame_trace(c, yaw, half, color, name):
     )
 
 
-def cylinder_trace(c, radius, z0, z1, color, opacity, name):
+def cylinder_trace(
+    c: np.ndarray, radius: float, z0: float, z1: float, color: str, opacity: float, name: str
+) -> go.Surface:
+    """Build a Plotly 3D surface trace for a vertical cylinder."""
     th = np.linspace(0, 2 * np.pi, 30)
     TH, Z = np.meshgrid(th, np.array([z0, z1]))
     X = c[0] + radius * np.cos(TH)
@@ -131,7 +142,15 @@ def cylinder_trace(c, radius, z0, z1, color, opacity, name):
     )
 
 
-def build_figure(start, gates, obstacles, traj, traj0, waypoints):
+def build_figure(
+    start: np.ndarray,
+    gates: list,
+    obstacles: list,
+    traj: np.ndarray,
+    traj0: np.ndarray,
+    waypoints: np.ndarray,
+) -> go.Figure:
+    """Assemble the interactive Plotly figure: trajectories, waypoints, gates, obstacles."""
     fig = go.Figure()
     fig.add_trace(line_trace(traj0, "nominal (no obstacles)", "lightgray", 3, "dash"))
     fig.add_trace(line_trace(traj, "planned (with obstacles)", "green", 6))
@@ -183,7 +202,8 @@ def build_figure(start, gates, obstacles, traj, traj0, waypoints):
     return fig
 
 
-def main():
+def main() -> None:
+    """Plan a trajectory on a fake track and write the interactive/static visualizations."""
     start = [-1.5, 0.75, 0.01]
     gates = [
         (np.array([0.5, 0.25, 0.7]), -0.78),
@@ -220,7 +240,8 @@ def main():
 
 
 # ---- matplotlib (static / interactive 3D, no browser) -----------------------
-def _mpl_gate(ax, c, yaw, half, color):
+def _mpl_gate(ax: object, c: np.ndarray, yaw: float, half: float, color: str) -> None:
+    """Draw a square gate frame in 3D matplotlib axes."""
     w = np.array([-np.sin(yaw), np.cos(yaw), 0.0])
     zz = np.array([0.0, 0.0, 1.0])
     corners = [(-1, -1), (1, -1), (1, 1), (-1, 1), (-1, -1)]
@@ -228,7 +249,10 @@ def _mpl_gate(ax, c, yaw, half, color):
     ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=color, lw=2)
 
 
-def _mpl_cylinder(ax, c, radius, z0, z1, color, alpha):
+def _mpl_cylinder(
+    ax: object, c: np.ndarray, radius: float, z0: float, z1: float, color: str, alpha: float
+) -> None:
+    """Draw a vertical cylinder in 3D matplotlib axes."""
     th = np.linspace(0, 2 * np.pi, 28)
     T, Z = np.meshgrid(th, np.array([z0, z1]))
     X = c[0] + radius * np.cos(T)
@@ -236,14 +260,23 @@ def _mpl_cylinder(ax, c, radius, z0, z1, color, alpha):
     ax.plot_surface(X, Y, Z, color=color, alpha=alpha, linewidth=0, shade=False)
 
 
-def _set_equal_3d(ax):
+def _set_equal_3d(ax: object) -> None:
+    """Set equal-aspect 3D axis limits based on the current x/y/z data limits."""
     xl, yl, zl = ax.get_xlim3d(), ax.get_ylim3d(), ax.get_zlim3d()
     ax.set_box_aspect((xl[1] - xl[0], yl[1] - yl[0], zl[1] - zl[0]))  # true scale
 
 
 def plot_matplotlib(
-    start, gates, obstacles, traj, traj0, waypoints, save_path="scene.png", show=True
-):
+    start: np.ndarray,
+    gates: list,
+    obstacles: list,
+    traj: np.ndarray,
+    traj0: np.ndarray,
+    waypoints: np.ndarray,
+    save_path: str = "scene.png",
+    show: bool = True,
+) -> plt.Figure:
+    """Plot the trajectory, waypoints, gates, and obstacles in a static/interactive 3D window."""
     fig = plt.figure(figsize=(11, 8))
     ax = fig.add_subplot(111, projection="3d")
 

@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.interpolate import CubicSpline
 
-from lsy_drone_racing.control.Planner.spline_planner_base import CLEARANCE, FRAME_WIDTH, Planner, Trajectory
+from lsy_drone_racing.control.Planner.spline_planner_base import (
+    CLEARANCE,
+    FRAME_WIDTH,
+    Planner,
+    Trajectory,
+)
 
 _MAX_AVOID_ITER = 6  # re-check loop cap
 _OBST_RADIUS = 0.15  # pillar radius (m), matches _check_obsticle
@@ -156,7 +161,10 @@ class SplinePlanner(Planner):
 
         return spline_ref_array, t_sample
 
-    def _create_spline(self, p_WLL_array, t_elapsed):
+    def _create_spline(
+        self, p_WLL_array: np.ndarray, t_elapsed: float
+    ) -> tuple[CubicSpline, np.ndarray]:
+        """Creates a cubic spline through waypoints, dropping coincident points."""
         p_WLL_array = np.asarray(p_WLL_array, dtype=float)
 
         segment_lengths = np.linalg.norm(np.diff(p_WLL_array, axis=0), axis=1)
@@ -209,19 +217,19 @@ class SplinePlanner(Planner):
         entry_i = None
         entry_c = None
         entry_push = None
-        entry_is_gate = None
 
         # Check each point from dense Spline for collision with obsticle and gateframe and reroute
         for i, p in enumerate(pts):
             hit_obst, c_xy_obst, push_obst = self._check_obsticle(p, pOLL_array)
-            # hit_gate, c_gate, local_gate, yaw_gate, push_gate = self._check_gate(p, pGLL_array, y_GBL_array)
+            # hit_gate, c_gate, local_gate, yaw_gate, push_gate = self._check_gate(
+            #     p, pGLL_array, y_GBL_array
+            # )
 
             if hit_obst:  # or hit_gate:
                 if not inside:
                     inside = True
                     entry_i = i
                     if hit_obst:
-                        entry_is_gate = False
                         entry_c = c_xy_obst
                         entry_push = push_obst
                     # else:

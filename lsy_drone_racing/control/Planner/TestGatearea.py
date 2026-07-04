@@ -16,10 +16,10 @@ from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
+from lsy_drone_racing.control.Planner.planner import FRAME_OPENING, FRAME_THICK, FRAME_WIDTH
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from scipy.spatial.transform import Rotation as R
 
-from lsy_drone_racing.control.Planner.planner import FRAME_OPENING, FRAME_THICK, FRAME_WIDTH
 from lsy_drone_racing.control.Planner.smart_planner import SplinePlanner
 
 try:
@@ -286,7 +286,8 @@ def plot_slice_views(
 # ---------- main -------------------------------------------------------------
 
 
-def main():
+def main() -> None:
+    """Generate gate-check visualizations for a fixed test track."""
     # Same gates as your level 2 nominal track
     start = [-1.5, 0.75, 0.01]
     gates = [

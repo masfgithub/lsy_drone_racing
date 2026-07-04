@@ -286,7 +286,7 @@ class Planner(ABC):
 
         Args:
             p_ref_LL:       Trajectory point to be checked.
-            obs:            Environment state observation.
+            pOLL_array:     Obstacle center positions.
 
         Returns:
             is_inside_obsticle:     Boolian value if point is inside true if its outside
@@ -323,7 +323,6 @@ class Planner(ABC):
         while np.linalg.norm(p_ref_LL[:2] - obsticle[:2]) < r_obsticle:
             p_ref_LL[0:2] += push_steps * push_vector[0:2]
             i += 1
-        distance = p_ref_LL[0:2] - obsticle[0:2]
         # breakpoint()
         push = i * push_steps + 0.03
         return push
@@ -415,6 +414,7 @@ class Planner(ABC):
             yaw:                    yaw of the hit gate.
             p_in:                   entering point of the hit gate.
             p_out:                  Exiting point of the hit gate.
+            p_mid:                  Midpoint between p_in and p_out.
 
         Returns:
             push_vector:            Vector that pushes away from the gate.

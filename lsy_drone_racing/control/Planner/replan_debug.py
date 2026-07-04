@@ -1,3 +1,5 @@
+"""Interactive Matplotlib debugger for visualizing planner replans."""
+
 from __future__ import annotations
 
 import os
@@ -24,8 +26,9 @@ DEFAULT_OBSTACLE_HEIGHT = 2.0
 
 
 class ReplanDebugger:
-    """Spawns an interactive 3D Matplotlib GUI window every time `.dump()` is called,
-    while saving a copy of the PNG to the output directory.
+    """Spawns an interactive 3D Matplotlib GUI window every time `.dump()` is called.
+
+    Also saves a copy of the PNG to the output directory.
     """
 
     def __init__(
@@ -38,6 +41,7 @@ class ReplanDebugger:
         obstacle_pillar_r: float = DEFAULT_OBSTACLE_PILLAR_R,
         obstacle_height: float = DEFAULT_OBSTACLE_HEIGHT,
     ):
+        """Set output directory and default gate/obstacle geometry for plotting."""
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
         self.counter = 0
@@ -213,12 +217,7 @@ class ReplanDebugger:
 
     @staticmethod
     def _draw_gate(
-        ax: object,
-        c: np.ndarray,
-        yaw: float,
-        half: float,
-        color: str,
-        lw: float = 2.0,
+        ax: object, c: np.ndarray, yaw: float, half: float, color: str, lw: float = 2.0
     ) -> None:
         """Draw a square gate frame of half-width `half` centered at c with heading yaw."""
         w = np.array([-np.sin(yaw), np.cos(yaw), 0.0])
@@ -229,13 +228,7 @@ class ReplanDebugger:
 
     @staticmethod
     def _draw_cylinder(
-        ax: object,
-        c: np.ndarray,
-        radius: float,
-        z0: float,
-        z1: float,
-        color: str,
-        alpha: float,
+        ax: object, c: np.ndarray, radius: float, z0: float, z1: float, color: str, alpha: float
     ) -> None:
         """Draw a vertical cylinder (obstacle keep-out) of given radius from z0 to z1."""
         th = np.linspace(0, 2 * np.pi, 28)
