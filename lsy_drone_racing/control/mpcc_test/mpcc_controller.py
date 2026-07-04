@@ -1,5 +1,4 @@
-"""
-mpcc_controller.py
+"""mpcc_controller.py
 ------------------
 Builds the acados OCP for the MPCC formulation and runs the receding-horizon
 loop (Algorithm 1 of the paper). See mpcc_model.py for the state convention.
@@ -13,7 +12,15 @@ import numpy as np
 from acados_template import AcadosOcp, AcadosOcpSolver
 
 from lsy_drone_racing.control.mpcc_test.mpcc_model import (
-    export_mpcc_model, MPCCConfig, NX, NU, NP, NY, NY_E, IDX_THETA, IDX_VTHETA,
+    IDX_THETA,
+    IDX_VTHETA,
+    NP,
+    NU,
+    NX,
+    NY,
+    NY_E,
+    MPCCConfig,
+    export_mpcc_model,
 )
 
 

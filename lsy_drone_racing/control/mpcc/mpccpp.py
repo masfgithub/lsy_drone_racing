@@ -29,7 +29,6 @@ from scipy.spatial.transform import Rotation as R
 
 from lsy_drone_racing.control.controller_interface import ControllerInterface
 from lsy_drone_racing.control.mpcc.mpccpp_setup import (
-    OBST_DIM,
     _BNM,
     _HIDX,
     _MU,
@@ -41,6 +40,7 @@ from lsy_drone_racing.control.mpcc.mpccpp_setup import (
     _TD,
     _THETA_BAR,
     _WIDX,
+    OBST_DIM,
     WEDGE_NP,
     num_params,
 )
@@ -69,7 +69,8 @@ def _gate_normals_from_quats(quats_wxyz: np.ndarray) -> np.ndarray:
 def _project_point(spline, d1, length, pos, s_lo=0.0, s_hi=None,
                    n_coarse=2000, n_newton=8):
     """Arc length of the point on `spline` nearest to `pos`, searched within
-    [s_lo, s_hi]. Coarse nearest-sample seed + a few Gauss-Newton steps."""
+    [s_lo, s_hi]. Coarse nearest-sample seed + a few Gauss-Newton steps.
+    """
     if s_hi is None:
         s_hi = length
     grid = np.linspace(s_lo, s_hi, n_coarse)

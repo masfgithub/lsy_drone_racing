@@ -1,5 +1,4 @@
-"""
-mpccpp_controller.py
+"""mpccpp_controller.py
 --------------------
 MPCC++ controller: plain MPCCController + the gate/track tunnel + soft obstacle
 (stick) avoidance. Tunnel and obstacles are each HARD or SOFT independently
@@ -22,12 +21,19 @@ import numpy as np
 from acados_template import AcadosOcp, AcadosOcpSolver
 
 from lsy_drone_racing.control.mpcc_test.mpcc_controller import MPCCController
-from lsy_drone_racing.control.mpcc_test.mpcc_model import (
-    NX, NU, NY, NY_E, IDX_THETA, IDX_VTHETA,
-)
+from lsy_drone_racing.control.mpcc_test.mpcc_model import NX, NY, NY_E
 from lsy_drone_racing.control.mpcc_test.mpccpp_model import (
-    export_mpccpp_model, MPCCppConfig, num_params, num_h,
-    N_TUNNEL, NRM, BNM, WIDX, HIDX, OBST_START, OBST_DIM,
+    BNM,
+    HIDX,
+    N_TUNNEL,
+    NRM,
+    OBST_DIM,
+    OBST_START,
+    WIDX,
+    MPCCppConfig,
+    export_mpccpp_model,
+    num_h,
+    num_params,
 )
 
 
@@ -124,7 +130,8 @@ class MPCCppController(MPCCController):
     # --------------------------------------------------- obstacle management
     def set_obstacles(self, centers, radii):
         """Load all stick centers [(x,y) or (x,y,z)] and keep-out radii.
-        Fewer than n_obstacles is fine; the rest stay disabled (r=0)."""
+        Fewer than n_obstacles is fine; the rest stay disabled (r=0).
+        """
         centers = np.atleast_2d(np.asarray(centers, dtype=float))
         radii = np.atleast_1d(np.asarray(radii, dtype=float))
         m = len(centers)

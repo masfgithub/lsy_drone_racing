@@ -7,20 +7,19 @@ in red. Use this to verify the check's geometry matches your physical gate.
 Run:  python test_gate_check.py
 """
 import os
+
 os.environ.setdefault("SCIPY_ARRAY_API", "1")
 
-from types import SimpleNamespace
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from scipy.spatial.transform import Rotation as R
 
+from lsy_drone_racing.control.Planner.planner import FRAME_OPENING, FRAME_THICK, FRAME_WIDTH
 from lsy_drone_racing.control.Planner.smart_planner import SplinePlanner
-from lsy_drone_racing.control.Planner.planner import (
-    FRAME_WIDTH, FRAME_OPENING, FRAME_THICK,
-)
 
 try:
     from lsy_drone_racing.control.env_obs import EnvState_t
@@ -178,7 +177,7 @@ def plot_slice_views(planner, gate_pos, gate_yaw, gate_idx,
         ax.plot([-s, s, s, -s, -s], [-s, -s, s, s, -s], color=color, lw=2)
     ax.set_xlabel('body y (left)')
     ax.set_ylabel('body z (up)')
-    ax.set_title(f'Frontal slice (body_x = 0)\nthe "window" view')
+    ax.set_title('Frontal slice (body_x = 0)\nthe "window" view')
     ax.set_aspect('equal')
 
     # ---- Slice 2: top-down view (body xy plane, body_z = 0) ----

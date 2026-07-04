@@ -1,5 +1,4 @@
-"""
-mpcc_model.py
+"""mpcc_model.py
 -------------
 acados model for Model Predictive Contouring Control (MPCC) of a quadrotor
 (Romero, Sun, Foehn, Scaramuzza, IEEE T-RO 2022).
@@ -37,6 +36,7 @@ Parameters (NP = 12) per node:
 """
 
 from dataclasses import dataclass
+
 import casadi as ca
 from acados_template import AcadosModel
 
@@ -136,7 +136,8 @@ def quadrotor_dynamics(x, u, cfg: MPCCConfig):
 
 def mpcc_residual(x, u, p, cfg: MPCCConfig, terminal=False):
     """Least-squares residual for the MPCC cost (eq.17). Reads only p[0:12], so
-    it is reused unchanged by the MPCC++ model (which appends tunnel params)."""
+    it is reused unchanged by the MPCC++ model (which appends tunnel params).
+    """
     pos = x[IDX_P]; w = x[IDX_W]
     theta = x[IDX_THETA]; vtheta = x[IDX_VTHETA]
 

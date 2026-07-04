@@ -1,5 +1,4 @@
-"""
-mpccpp_example.py
+"""mpccpp_example.py
 -----------------
 Closed-loop MPCC++ on a 7-gate loop with a gate-aligned tunnel AND four stick
 obstacles (3 cm poles, shared keep-out radius) avoided via soft constraints.
@@ -19,13 +18,10 @@ Requires: numpy, scipy, casadi, acados, matplotlib.
 
 import numpy as np
 
-from lsy_drone_racing.control.mpcc_test.mpcc_model import (
-    make_dynamics_fn, IDX_THETA, IDX_VTHETA,
-)
+from lsy_drone_racing.control.mpcc_test.mpcc_model import IDX_THETA, IDX_VTHETA, make_dynamics_fn
+from lsy_drone_racing.control.mpcc_test.mpccpp_controller import MPCCppController
 from lsy_drone_racing.control.mpcc_test.mpccpp_model import MPCCppConfig
 from lsy_drone_racing.control.mpcc_test.mpccpp_reference import TunnelReferencePath
-from lsy_drone_racing.control.mpcc_test.mpccpp_controller import MPCCppController
-
 
 # === scenario definition (edit these like a track file) =====================
 GATE_CENTERS = np.array([
@@ -136,7 +132,7 @@ def tunnel_corners(ref, n_theta=220):
 
 def plot(ref, obstacles, log, save_prefix="mpccpp"):
     import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D                       # noqa: F401
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
     obs_centers, obs_r = obstacles

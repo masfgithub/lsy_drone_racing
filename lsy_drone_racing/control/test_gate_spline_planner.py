@@ -9,11 +9,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import numpy as np
-from scipy.spatial.transform import Rotation as Rot
-
 import gate_spline_planner as gsp
+import numpy as np
 from gate_spline_planner import GateCenterSplinePlanner, plot_plan
+from scipy.spatial.transform import Rotation as Rot
 
 # Distance (m) between each gate's approach and exit waypoint (they sit at
 # +/- half this along the gate normal). Set to 10 cm.
@@ -82,6 +81,7 @@ def make_obs() -> SimpleNamespace:
 
 
 def main() -> None:
+    """Run the gate-spline planner test on a synthetic observation and plot the result."""
     obs = make_obs()
     config = SimpleNamespace(env=SimpleNamespace(freq=50))
 

@@ -1,5 +1,4 @@
-"""
-mpcc_reference.py
+"""mpcc_reference.py
 -----------------
 Arc-length-parameterized 3D reference path for MPCC (Romero et al. 2022).
 

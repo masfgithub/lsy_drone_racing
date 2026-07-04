@@ -61,7 +61,7 @@ def create_ocp_solver_soft(
     obstacles: list[CylinderObstacle],
     gate_weight: float = 1000.0,
     obstacle_weight: float = 1000.0,
-    post_weight=1000.0,
+    post_weight: float = 1000.0,
     use_input_rate: bool = False,
     df_cmd_rate_max: float | None = 5.0,
     dr_cmd_rate_max: float | None = None,

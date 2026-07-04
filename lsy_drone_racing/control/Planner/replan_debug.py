@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+
 import matplotlib
 
 # CHANGE 1: Use an interactive backend (TkAgg, QtAgg, etc.) instead of 'Agg'

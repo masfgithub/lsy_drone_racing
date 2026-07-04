@@ -21,12 +21,12 @@ from lsy_drone_racing.control.nmpc.nmpc import NMPC
 CONTROLLER_TYPE = "mpccpp"
 
 # Active planner: "Smart" | "Simple"
-PLANNER_TYPE = "Smart"
+PLANNER_TYPE = "Simple"
 
 if PLANNER_TYPE == "Smart":
     from lsy_drone_racing.control.Planner.smart_planner import SplinePlanner
 elif PLANNER_TYPE == "Simple":
-    from lsy_drone_racing.control.SplinePlanner_2 import SplinePlanner
+    from lsy_drone_racing.control.Planner.SplinePlanner_2 import SplinePlanner
 
 if TYPE_CHECKING:
     from crazyflow import Sim

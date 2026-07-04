@@ -8,7 +8,8 @@ problem is always feasible.
 """
 
 import numpy as np
-from casadi import MX, fmax, fmin , sqrt
+from casadi import MX, fmax, fmin, sqrt
+
 POST_RADIUS = 0.10 + 0.05
 
 try:
@@ -71,7 +72,7 @@ def create_soft_env_constraints(
     obstacles: list[CylinderObstacle] | None = None,
     gate_weight: float = 1000.0,
     obstacle_weight: float = 1000.0,
-    post_weight=1000.0,
+    post_weight: float = 1000.0,
 ) -> dict:
     """Attach soft environment constraints to an AcadosModel as runtime parameters.
 
@@ -93,6 +94,7 @@ def create_soft_env_constraints(
         obstacles:       List of CylinderObstacle objects (may be None).
         gate_weight:     Quadratic penalty weight for gate violations.
         obstacle_weight: Quadratic penalty weight for obstacle violations.
+        post_weight:     Quadratic penalty weight for gate-post violations.
 
     Returns:
         Dict with keys: gates, obstacles, p, p0, n_gates, n_obs,
@@ -166,9 +168,19 @@ def verify_env_constraints(
     return all_ok
 
 
-def post_penalty_sym(pBLL, gate_center, r_post, hole_height, margin, z_floor=0.0):
-    """Capsule keep-out for the gate post: a vertical segment from the floor up to
-    just below the opening. Above the cap the penalty vanishes so the hole stays flyable."""
+def post_penalty_sym(
+    pBLL: MX,
+    gate_center: MX,
+    r_post: float,
+    hole_height: float,
+    margin: float,
+    z_floor: float = 0.0,
+) -> MX:
+    """Capsule keep-out for the gate post.
+
+    A vertical segment from the floor up to just below the opening. Above the
+    cap the penalty vanishes so the hole stays flyable.
+    """
     cx, cy, cz = gate_center[0], gate_center[1], gate_center[2]
     z_top = cz - hole_height / 2 - margin - r_post     # radius folded in so it can't reach the hole
     L = z_top - z_floor

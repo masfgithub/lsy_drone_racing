@@ -2,12 +2,9 @@
 
 import numpy as np
 from scipy.interpolate import CubicSpline
-from scipy.spatial.transform import Rotation as R
-
-
 
 from lsy_drone_racing.control.env_obs import EnvState_t
-from lsy_drone_racing.control.Planner.planner import Planner, Trajectory, R_OBSTACLE, FRAME_WIDTH
+from lsy_drone_racing.control.Planner.planner import FRAME_WIDTH, R_OBSTACLE, Planner, Trajectory
 
 _MAX_AVOID_ITER = 20     # maximum number of iterations to avoid obstacles
 
@@ -1353,13 +1350,17 @@ class SplinePlanner(Planner):
             Path to the saved PNG.
         """
         import os
+
         import matplotlib.pyplot as plt
         
         os.makedirs(save_dir, exist_ok=True)
         
         # Constants — match planner.py
         from lsy_drone_racing.control.Planner.planner import (
-            FRAME_WIDTH, FRAME_OPENING, R_OBSTACLE, CLEARANCE
+            CLEARANCE,
+            FRAME_OPENING,
+            FRAME_WIDTH,
+            R_OBSTACLE,
         )
         
         # Sample the trajectory
@@ -1541,8 +1542,12 @@ class SplinePlanner(Planner):
             block:        If True, pause script until window closed.
         """
         import matplotlib.pyplot as plt
+
         from lsy_drone_racing.control.Planner.planner import (
-            FRAME_WIDTH, FRAME_OPENING, R_OBSTACLE, CLEARANCE
+            CLEARANCE,
+            FRAME_OPENING,
+            FRAME_WIDTH,
+            R_OBSTACLE,
         )
         
         # Find violation samples (any gate frame)

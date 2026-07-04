@@ -11,17 +11,18 @@ lsy_drone_racing, refuses to load otherwise).
 Run:  python view_spline_3d.py        # writes scene.html, open it in a browser
 """
 import os
+
 os.environ.setdefault("SCIPY_ARRAY_API", "1")
 
 from dataclasses import dataclass, field
 
+import matplotlib.pyplot as plt  # NOTE: don't force a backend here, so plt.show() can open a window
 import numpy as np
 import plotly.graph_objects as go
 from scipy.spatial.transform import Rotation as R
-import matplotlib.pyplot as plt   # NOTE: don't force a backend here, so plt.show() can open a window
 
+from lsy_drone_racing.control.Planner.planner import CLEARANCE, FRAME_OPENING, FRAME_WIDTH
 from lsy_drone_racing.control.Planner.smart_planner import SplinePlanner
-from lsy_drone_racing.control.Planner.planner import FRAME_WIDTH, FRAME_OPENING, CLEARANCE
 
 try:
     from lsy_drone_racing.control.env_obs import EnvState_t
@@ -63,7 +64,8 @@ def make_obs(start, gates, obstacles) -> "EnvState_t":
 
 def get_set_waypoints(planner, obs):
     """Exact waypoints if the planner exposes self._waypoints, else reconstruct
-    the start + prev/gate/next set the way _build_waypoints does."""
+    the start + prev/gate/next set the way _build_waypoints does.
+    """
     wps = getattr(planner, "_waypoints", None)
     if wps is not None and len(wps):
         return np.asarray(wps, float)

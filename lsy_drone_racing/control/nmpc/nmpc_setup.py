@@ -81,17 +81,23 @@ def create_ocp_solver(
     """Creates an acados Optimal Control Problem and Solver.
 
     Args:
-        Tf, N, parameters, gates, obstacles: as before.
+        Tf:                 Prediction horizon length in seconds.
+        N:                  Number of shooting nodes over the horizon.
+        parameters:         Drone model parameters.
+        gates:              Gate window constraints.
+        obstacles:          Cylinder obstacle constraints.
         use_input_rate:     If True, build the rate-augmented model (commands are
                             states, rates are inputs) and apply per-command
                             slew-rate limits via the input box.
         df_cmd_rate_max:    Slew limit on the thrust command (|df_cmd| <= value,
                             N/s). Finite activates; None => rate_limit_default.
-        dr/dp/dy_cmd_rate_max: Slew limits on roll/pitch/yaw commands (rad/s).
-                            None => inactive (rate_limit_default).
+        dr_cmd_rate_max:    Slew limit on the roll command (rad/s); see df_cmd_rate_max.
+        dp_cmd_rate_max:    Slew limit on the pitch command (rad/s); see df_cmd_rate_max.
+        dy_cmd_rate_max:    Slew limit on the yaw command (rad/s); see df_cmd_rate_max.
         rate_limit_default: Wide bound for inactive rate inputs.
         r_rate:             Small LS weight on the rate inputs (conditioning /
                             smoothing; only used when use_input_rate=True).
+        verbose:            If True, print solver setup diagnostics.
     """
     ocp = AcadosOcp()
 

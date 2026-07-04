@@ -1,5 +1,4 @@
-"""
-mpcc_example.py
+"""mpcc_example.py
 ---------------
 Closed-loop simulation of the plain MPCC controller on a 7-gate loop, with
 plots: a 3D drone trajectory (colored by speed) over the reference path and the
@@ -15,7 +14,10 @@ import numpy as np
 
 from lsy_drone_racing.control.mpcc_test.mpcc_controller import MPCCController
 from lsy_drone_racing.control.mpcc_test.mpcc_model import (
-    IDX_THETA, IDX_VTHETA, MPCCConfig, make_dynamics_fn,
+    IDX_THETA,
+    IDX_VTHETA,
+    MPCCConfig,
+    make_dynamics_fn,
 )
 from lsy_drone_racing.control.mpcc_test.mpcc_reference import ReferencePath
 

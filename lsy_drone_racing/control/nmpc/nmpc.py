@@ -30,7 +30,7 @@ class NMPC(ControllerInterface):
         use_soft: bool = False,
         gate_weight: float = 1e4,
         obstacle_weight: float = 1e4,
-        post_weight: float= 1e4,
+        post_weight: float = 1e4,
         use_input_rate: bool = True,
         df_cmd_rate_max: float | None = 5.0,
         dr_cmd_rate_max: float | None = None,
@@ -49,14 +49,18 @@ class NMPC(ControllerInterface):
                              If False, use hard constraints (con_h_expr).
             gate_weight:     Soft penalty weight for gate violations.
             obstacle_weight: Soft penalty weight for obstacle violations.
+            post_weight:     Soft penalty weight for gate-post violations.
             use_input_rate:  If True, use the rate-augmented model: the commands
                              [r_cmd, p_cmd, y_cmd, f_cmd] become states (16-state
                              model) and the inputs become their rates, so the input
                              box acts as a per-command slew-rate limit. False
                              keeps the baseline 12-state model bit-identical.
-            df/dr/dp/dy_cmd_rate_max: Per-command slew limits (thrust N/s, attitude
-                             rad/s); only used when use_input_rate=True. Finite value
-                             activates; None => inactive (wide default).
+            df_cmd_rate_max: Per-command slew limit for thrust (N/s); only used
+                             when use_input_rate=True. Finite value activates;
+                             None => inactive (wide default).
+            dr_cmd_rate_max: Per-command slew limit for roll (rad/s); see df_cmd_rate_max.
+            dp_cmd_rate_max: Per-command slew limit for pitch (rad/s); see df_cmd_rate_max.
+            dy_cmd_rate_max: Per-command slew limit for yaw (rad/s); see df_cmd_rate_max.
         """
         super().__init__(obs, planner, info, config, t_total)
         self._freq = config.env.freq
@@ -177,7 +181,9 @@ class NMPC(ControllerInterface):
         for k in range(self._N):
             self.u_pred[k] = np.zeros(self._nu)
 
-    def control(self, obs: EnvState_t, info: dict | None = None, tick_offset: float = 0.0) -> NDArray[np.floating]:
+    def control(
+        self, obs: EnvState_t, info: dict | None = None, tick_offset: float = 0.0
+    ) -> NDArray[np.floating]:
         """Compute the next desired collective thrust and roll/pitch/yaw."""
         i = min(self._tick-tick_offset, self._tick_max-tick_offset)
         if self._tick >= self._tick_max:
@@ -321,7 +327,8 @@ class NMPC(ControllerInterface):
         """Return predicted position trajectory for the whole horizon."""
         return np.array([self._acados_ocp_solver.get(k, "x")[:3] for k in range(self._N + 1)])
 
-    def get_ref_traj(self, i=None) -> np.ndarray:
+    def get_ref_traj(self, i: int | None = None) -> np.ndarray:
+        """Return the reference trajectory sample at tick i (defaults to the current tick)."""
         if i is None:
             i = self._tick
         i = int(min(i, self._tick_max))
