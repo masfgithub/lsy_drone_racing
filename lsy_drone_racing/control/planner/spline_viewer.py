@@ -1,6 +1,6 @@
 """Interactive 3D viewer for SplinePlanner — no simulator required.
 
-Runs the planner on a fake EnvState_t (start + 2 gates + obstacles) and writes
+Runs the planner on a fake EnvState (start + 2 gates + obstacles) and writes
 an interactive Plotly HTML you open in a browser: rotate, zoom, and hover any
 waypoint to read its index and coordinates. Trajectory, gates, obstacle pillars
 (with keep-out shells) and gate-post keep-outs are all drawn.
@@ -8,7 +8,7 @@ waypoint to read its index and coordinates. Trajectory, gates, obstacle pillars
 The SCIPY_ARRAY_API line MUST stay first (crazyflow, pulled in by
 lsy_drone_racing, refuses to load otherwise).
 
-Run:  python view_spline_3d.py        # writes scene.html, open it in a browser
+Run:  python spline_viewer.py        # writes scene.html, open it in a browser
 """
 
 import os
@@ -20,30 +20,30 @@ from dataclasses import dataclass, field
 import matplotlib.pyplot as plt  # NOTE: don't force a backend here, so plt.show() can open a window
 import numpy as np
 import plotly.graph_objects as go
-from lsy_drone_racing.control.Planner.planner import CLEARANCE, FRAME_OPENING, FRAME_WIDTH
+from lsy_drone_racing.control.planner.planner import CLEARANCE, FRAME_OPENING, FRAME_WIDTH
 from scipy.spatial.transform import Rotation as R
 
-from lsy_drone_racing.control.Planner.smart_planner import SplinePlanner
+from lsy_drone_racing.control.planner.smart_planner import SplinePlanner
 
 try:
-    from lsy_drone_racing.control.env_obs import EnvState_t
+    from lsy_drone_racing.control.env_obs import EnvState
 except Exception:  # crazyflow chain unavailable -> local stand-in
 
     @dataclass
-    class EnvState_t:
-        """Fallback observation state, used when the real EnvState_t is unavailable."""
+    class EnvState:
+        """Fallback observation state, used when the real EnvState is unavailable."""
 
-        pBLL: np.ndarray = field(default_factory=lambda: np.zeros(3))
-        vBLL: np.ndarray = field(default_factory=lambda: np.zeros(3))
-        wBLL: np.ndarray = field(default_factory=lambda: np.zeros(3))
-        qBLB: np.ndarray = field(default_factory=lambda: np.zeros(4))
-        pTLL_array: np.ndarray = field(default_factory=lambda: np.zeros((4, 3)))
-        pTLL_index: int = 0
-        qTLT_array: np.ndarray = field(default_factory=lambda: np.zeros((4, 4)))
-        pOLL_array: np.ndarray = field(default_factory=lambda: np.zeros((4, 3)))
-        hT: float = 0.3
-        lT: float = 0.3
-        wT: float = 0.02
+        p_bll: np.ndarray = field(default_factory=lambda: np.zeros(3))
+        v_bll: np.ndarray = field(default_factory=lambda: np.zeros(3))
+        w_bll: np.ndarray = field(default_factory=lambda: np.zeros(3))
+        q_blb: np.ndarray = field(default_factory=lambda: np.zeros(4))
+        p_tll_array: np.ndarray = field(default_factory=lambda: np.zeros((4, 3)))
+        p_tll_index: int = 0
+        q_tlt_array: np.ndarray = field(default_factory=lambda: np.zeros((4, 4)))
+        p_oll_array: np.ndarray = field(default_factory=lambda: np.zeros((4, 3)))
+        h_t: float = 0.3
+        l_t: float = 0.3
+        w_t: float = 0.02
 
 
 from types import SimpleNamespace
@@ -53,23 +53,23 @@ HOLE_H = 0.23
 MARGIN = 0.05
 
 
-def make_obs(start: np.ndarray, gates: list, obstacles: list) -> "EnvState_t":
-    """Build a minimal EnvState_t from a start position, gate list, and obstacle list."""
-    obs = EnvState_t()
-    obs.pBLL = np.asarray(start, float)
-    obs.vBLL = np.zeros(3)
-    obs.wBLL = np.zeros(3)
-    obs.qBLB = np.array([0.0, 0.0, 0.0, 1.0])
-    obs.pTLL_array = np.array([g[0] for g in gates], float)
-    obs.qTLT_array = np.array([R.from_euler("Z", g[1]).as_quat() for g in gates])
-    obs.pTLL_index = 0
-    obs.pOLL_array = (
+def make_obs(start: np.ndarray, gates: list, obstacles: list) -> "EnvState":
+    """Build a minimal EnvState from a start position, gate list, and obstacle list."""
+    obs = EnvState()
+    obs.p_bll = np.asarray(start, float)
+    obs.v_bll = np.zeros(3)
+    obs.w_bll = np.zeros(3)
+    obs.q_blb = np.array([0.0, 0.0, 0.0, 1.0])
+    obs.p_tll_array = np.array([g[0] for g in gates], float)
+    obs.q_tlt_array = np.array([R.from_euler("Z", g[1]).as_quat() for g in gates])
+    obs.p_tll_index = 0
+    obs.p_oll_array = (
         np.asarray(obstacles, float).reshape(-1, 3) if len(obstacles) else np.zeros((0, 3))
     )
     return obs
 
 
-def get_set_waypoints(planner: object, obs: "EnvState_t") -> np.ndarray:
+def get_set_waypoints(planner: object, obs: "EnvState") -> np.ndarray:
     """Exact waypoints if the planner exposes self._waypoints, else reconstruct them.
 
     Reconstructs the start + prev/gate/next set the way _build_waypoints does.
@@ -77,7 +77,7 @@ def get_set_waypoints(planner: object, obs: "EnvState_t") -> np.ndarray:
     wps = getattr(planner, "_waypoints", None)
     if wps is not None and len(wps):
         return np.asarray(wps, float)
-    pDLL = obs.pBLL
+    pDLL = obs.p_bll
     pG, yaws = planner._gate(obs)
     D = 0.6
     out = [np.asarray(pDLL, float)]

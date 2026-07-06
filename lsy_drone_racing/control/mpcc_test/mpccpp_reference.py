@@ -18,7 +18,7 @@ How it works
   between gates it is a smooth blend of the two neighbouring gate frames,
   re-orthonormalized against the path tangent.
 * Tunnel size: pinches to the gate opening at each gate and widens to
-  (W_nom, H_nom) in between.
+  (w_nom, h_nom) in between.
 
 The base ReferencePath (spline, qc, projection) is reused unchanged.
 """
@@ -66,8 +66,8 @@ class TunnelReferencePath(ReferencePath):
         qc_nom: float = 1.0,
         qc_gate: float = 120.0,
         gate_sigma: float = 0.8,
-        W_nom: float = 3.0,
-        H_nom: float | None = None,
+        w_nom: float = 3.0,
+        h_nom: float | None = None,
         tunnel_sigma: float = 1.0,
         frame_up: tuple[float, float, float] = (0.0, 0.0, 1.0),
         gate_tangent_len: float = 0.5,
@@ -84,8 +84,8 @@ class TunnelReferencePath(ReferencePath):
             qc_nom: Nominal contouring cost weight.
             qc_gate: Contouring cost weight boost near gates.
             gate_sigma: Width (in path length) of the qc_gate boost around each gate.
-            W_nom: Nominal tunnel half-width away from gates.
-            H_nom: Nominal tunnel half-height away from gates; defaults to W_nom.
+            w_nom: Nominal tunnel half-width away from gates.
+            h_nom: Nominal tunnel half-height away from gates; defaults to w_nom.
             tunnel_sigma: Width (in path length) of the pinch to the gate opening.
             frame_up: Approximate "up" direction used to disambiguate gate axes.
             gate_tangent_len: Offset used to fit the centerline tangent to the gate normal.
@@ -139,8 +139,8 @@ class TunnelReferencePath(ReferencePath):
         self.gate_centers = centers
         self.gate_n, self.gate_w, self.gate_h = normals, gw, gh
         self.gate_hw, self.gate_hh = gate_hw, gate_hh
-        self.W_nom = float(W_nom)
-        self.H_nom = float(W_nom if H_nom is None else H_nom)
+        self.w_nom = float(w_nom)
+        self.h_nom = float(w_nom if h_nom is None else h_nom)
         self.tunnel_sigma = float(tunnel_sigma)
         self._up = up
 
@@ -187,8 +187,8 @@ class TunnelReferencePath(ReferencePath):
         if self.closed:
             d = (d + self.length / 2.0) % self.length - self.length / 2.0
         g = np.exp(-0.5 * (d / self.tunnel_sigma) ** 2)  # per-gate bump
-        W = self.W_nom - float(np.sum((self.W_nom - self.gate_hw) * g))
-        H = self.H_nom - float(np.sum((self.H_nom - self.gate_hh) * g))
+        W = self.w_nom - float(np.sum((self.w_nom - self.gate_hw) * g))
+        H = self.h_nom - float(np.sum((self.h_nom - self.gate_hh) * g))
         return max(W, 0.05), max(H, 0.05)
 
     # -------------------------------------------------------------- plotting

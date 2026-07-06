@@ -66,17 +66,17 @@ class MPCCController:
 
         ocp.constraints.idxbx = np.array([10, 11, 12, 13, 14, 15, 16, 18])
         ocp.constraints.lbx = np.array(
-            [-cfg.w_max, -cfg.w_max, -cfg.w_max, cfg.T_min, cfg.T_min, cfg.T_min, cfg.T_min, 0.0]
+            [-cfg.w_max, -cfg.w_max, -cfg.w_max, cfg.t_min, cfg.t_min, cfg.t_min, cfg.t_min, 0.0]
         )
         ocp.constraints.ubx = np.array(
             [
                 cfg.w_max,
                 cfg.w_max,
                 cfg.w_max,
-                cfg.T_max,
-                cfg.T_max,
-                cfg.T_max,
-                cfg.T_max,
+                cfg.t_max,
+                cfg.t_max,
+                cfg.t_max,
+                cfg.t_max,
                 cfg.vtheta_max,
             ]
         )

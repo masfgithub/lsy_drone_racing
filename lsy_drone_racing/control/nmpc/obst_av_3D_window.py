@@ -37,7 +37,7 @@ def build_ocp(
     pos = vertcat(x[0], x[1], x[2])
 
     # Attach all environment constraints and parameters to the model
-    env = create_env_constraints(model=model, pBLL=pos, gates=gates, obstacles=obstacles)
+    env = create_env_constraints(model=model, p_bll=pos, gates=gates, obstacles=obstacles)
 
     ocp = AcadosOcp()
     ocp.model = model

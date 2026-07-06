@@ -3,8 +3,8 @@
 import numpy as np
 from scipy.interpolate import CubicSpline
 
-from lsy_drone_racing.control.env_obs import EnvState_t
-from lsy_drone_racing.control.Planner.smart_planner_base import (
+from lsy_drone_racing.control.env_obs import EnvState
+from lsy_drone_racing.control.planner.smart_planner_base import (
     FRAME_WIDTH,
     R_OBSTACLE,
     Planner,
@@ -17,7 +17,7 @@ _MAX_AVOID_ITER = 20  # maximum number of iterations to avoid obstacles
 class SplinePlanner(Planner):
     """Class to generate smooth Drone Trajectory for MPC."""
 
-    def __init__(self, obs: EnvState_t, info: dict, config: dict, t_total: float):
+    def __init__(self, obs: EnvState, info: dict, config: dict, t_total: float):
         """Initialize SplinePlanner.
 
         Args:
@@ -30,7 +30,7 @@ class SplinePlanner(Planner):
         super().__init__(obs, info, config)
         self._t_total = t_total
 
-    def plan(self, obs: EnvState_t, t_elapsed: float) -> Trajectory:
+    def plan(self, obs: EnvState, t_elapsed: float) -> Trajectory:
         """Function called at the initilazion of the drone racing pipline.
 
         Args:
@@ -80,7 +80,7 @@ class SplinePlanner(Planner):
 
         return spline_ref_array, t_sample
 
-    def _build_waypoints(self, obs: EnvState_t, t_elapsed: float) -> np.ndarray:
+    def _build_waypoints(self, obs: EnvState, t_elapsed: float) -> np.ndarray:
         """Creates waypoints to avoid hindrances and complete gates.
 
         Args:
@@ -91,16 +91,16 @@ class SplinePlanner(Planner):
             p_WLL_array:        N-dim array of waypoints for the cubic spline.
         """
         # Current drone position
-        pDLL = obs.pBLL
+        pDLL = obs.p_bll
 
         # Read out gates
         pGLL_array, y_GBL_array = self._gate(obs)
 
         # Read out obstacles
-        pOLL_array = obs.pOLL_array
-        # print(pOLL_array)
+        p_oll_array = obs.p_oll_array
+        # print(p_oll_array)
         # Parameter defined to set helping points in front and behind the gates
-        Distance = 0.05
+        distance = 0.05
 
         # Create waypoint matrix
         p_WLL_array = pDLL
@@ -109,8 +109,8 @@ class SplinePlanner(Planner):
         pNextLL = np.zeros(3)
 
         for i in range(len(pGLL_array)):
-            pPrevLL[0] = pGLL_array[i, 0] - Distance * np.cos(y_GBL_array[i])
-            pPrevLL[1] = pGLL_array[i, 1] - Distance * np.sin(y_GBL_array[i])
+            pPrevLL[0] = pGLL_array[i, 0] - distance * np.cos(y_GBL_array[i])
+            pPrevLL[1] = pGLL_array[i, 1] - distance * np.sin(y_GBL_array[i])
             pPrevLL[2] = pGLL_array[i, 2]
 
             p_WLL_array = np.vstack([p_WLL_array, pPrevLL])
@@ -118,21 +118,21 @@ class SplinePlanner(Planner):
             p_WLL_array = np.vstack([p_WLL_array, pGLL_array[i]])
 
             if i == len(pGLL_array) - 1:
-                Distance = 1
+                distance = 1
 
-            pNextLL[0] = pGLL_array[i, 0] + Distance * np.cos(y_GBL_array[i])
-            pNextLL[1] = pGLL_array[i, 1] + Distance * np.sin(y_GBL_array[i])
+            pNextLL[0] = pGLL_array[i, 0] + distance * np.cos(y_GBL_array[i])
+            pNextLL[1] = pGLL_array[i, 1] + distance * np.sin(y_GBL_array[i])
             pNextLL[2] = pGLL_array[i, 2]
 
             p_WLL_array = np.vstack([p_WLL_array, pNextLL])
         # p_WLL_array = self._180_degree_turn(p_WLL_array,
-        #                                    pOLL_array, pGLL_array, y_GBL_array, t_elapsed, obs)
+        #                                    p_oll_array, pGLL_array, y_GBL_array, t_elapsed, obs)
         # p_WLL_array = self._avoid_collisions(
-        #     p_WLL_array, pOLL_array, pGLL_array, y_GBL_array, t_elapsed
+        #     p_WLL_array, p_oll_array, pGLL_array, y_GBL_array, t_elapsed
         # )
 
         p_WLL_array = self._avoidance_tree(
-            p_WLL_array, pOLL_array, pGLL_array, y_GBL_array, t_elapsed
+            p_WLL_array, p_oll_array, pGLL_array, y_GBL_array, t_elapsed
         )
 
         return p_WLL_array
@@ -140,17 +140,17 @@ class SplinePlanner(Planner):
     def _avoidance_tree(
         self,
         p_WLL_array: np.ndarray,
-        pOLL_array: np.ndarray,
+        p_oll_array: np.ndarray,
         pGLL_array: np.ndarray,
         y_GBL_array: np.array,
         t_elapsed: float,
     ) -> np.ndarray:
         # p_WLL_array = self._avoid_gates(p_WLL_array, pGLL_array, y_GBL_array, t_elapsed)
         p_WLL_array = self._avoid_gates_tree(
-            p_WLL_array, pGLL_array, y_GBL_array, pOLL_array, t_elapsed
+            p_WLL_array, pGLL_array, y_GBL_array, p_oll_array, t_elapsed
         )
         p_WLL_array = self._avoid_obsticles(
-            p_WLL_array, pOLL_array, pGLL_array, y_GBL_array, t_elapsed
+            p_WLL_array, p_oll_array, pGLL_array, y_GBL_array, t_elapsed
         )
 
         return p_WLL_array
@@ -174,7 +174,7 @@ class SplinePlanner(Planner):
     def _avoid_obsticles(
         self,
         p_WLL_array: np.ndarray,
-        pOLL_array: np.ndarray,
+        p_oll_array: np.ndarray,
         pGLL_array: np.ndarray,
         y_GBL_array: np.ndarray,
         t_elapsed: float,
@@ -184,7 +184,7 @@ class SplinePlanner(Planner):
         self._pGLL_array = pGLL_array
         self._y_GBL_array = y_GBL_array
 
-        wps_final, is_clear = self._explore(wps, t_elapsed, pOLL_array, max_depth=6)
+        wps_final, is_clear = self._explore(wps, t_elapsed, p_oll_array, max_depth=6)
         print(f"final: clear={is_clear}")
         return wps_final
 
@@ -192,7 +192,7 @@ class SplinePlanner(Planner):
         self,
         wps: np.ndarray,
         t_elapsed: float,
-        pOLL_array: np.ndarray,
+        p_oll_array: np.ndarray,
         max_depth: int = 6,
         depth: int = 0,
     ) -> tuple[np.ndarray, bool]:
@@ -210,7 +210,7 @@ class SplinePlanner(Planner):
         seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
         cum = np.concatenate([[0.0], np.cumsum(seg)])
 
-        entry_i, exit_i, entry_obst_c = self._find_first_obstacle_violation(pts, pOLL_array)
+        entry_i, exit_i, entry_obst_c = self._find_first_obstacle_violation(pts, p_oll_array)
         if entry_i is None:
             return wps, True  # No violations remaining — done
 
@@ -225,13 +225,13 @@ class SplinePlanner(Planner):
             cum,
             initial_push_sign=+1,
             t_elapsed=t_elapsed,
-            pOLL_array=pOLL_array,
+            p_oll_array=p_oll_array,
             max_iter=10,
             target_obst_c=entry_obst_c,
         )
         if ok_A:
             wps_A, clear_A = self._explore(
-                wps_A, t_elapsed, pOLL_array, max_depth=max_depth, depth=depth + 1
+                wps_A, t_elapsed, p_oll_array, max_depth=max_depth, depth=depth + 1
             )
         else:
             clear_A = False
@@ -246,13 +246,13 @@ class SplinePlanner(Planner):
             cum,
             initial_push_sign=-1,
             t_elapsed=t_elapsed,
-            pOLL_array=pOLL_array,
+            p_oll_array=p_oll_array,
             max_iter=10,
             target_obst_c=entry_obst_c,
         )
         if ok_B:
             wps_B, clear_B = self._explore(
-                wps_B, t_elapsed, pOLL_array, max_depth=max_depth, depth=depth + 1
+                wps_B, t_elapsed, p_oll_array, max_depth=max_depth, depth=depth + 1
             )
         else:
             clear_B = False
@@ -355,7 +355,7 @@ class SplinePlanner(Planner):
         cum: np.ndarray,
         initial_push_sign: int,
         t_elapsed: float,
-        pOLL_array: np.ndarray,
+        p_oll_array: np.ndarray,
         target_obst_c: np.ndarray,
         max_iter: int = 10,
     ) -> tuple[np.ndarray, bool]:
@@ -474,13 +474,13 @@ class SplinePlanner(Planner):
         return bis / nb
 
     def _find_first_obstacle_violation(
-        self, pts: np.ndarray, pOLL_array: np.ndarray
+        self, pts: np.ndarray, p_oll_array: np.ndarray
     ) -> tuple[int, int, np.ndarray] | tuple[None, None, None]:
         """Find the first obstacle-violation segment in a dense pts array.
 
         Args:
             pts:        Dense spline samples (N, 3).
-            pOLL_array: Obstacle centers.
+            p_oll_array: Obstacle centers.
 
         Returns:
             (entry_i, exit_i, obstacle_center) for the first violation, or
@@ -491,7 +491,7 @@ class SplinePlanner(Planner):
         entry_obst_c = None
 
         for i, p in enumerate(pts):
-            hit, obst_c = self._check_obsticle2(p, pOLL_array)
+            hit, obst_c = self._check_obsticle2(p, p_oll_array)
             if hit:
                 if not inside:
                     inside = True
@@ -715,7 +715,7 @@ class SplinePlanner(Planner):
         Args:
             pts:            Dense spline samples (N, 3).
             cum:            Cumulative arc-length array (N,).
-            pGLL_array:     Gate centers (remaining gates after pTLL_index).
+            pGLL_array:     Gate centers (remaining gates after p_tll_index).
             y_GBL_array:    Gate yaws.
             skip_approach:  If True, skip approach-side violations.
 
@@ -775,7 +775,7 @@ class SplinePlanner(Planner):
         t_elapsed: float,
         pGLL_array: np.ndarray,
         y_GBL_array: np.ndarray,
-        pOLL_array: np.ndarray,
+        p_oll_array: np.ndarray,
         local_radius: float = 0.8,
         max_iter: int = 5,
         extra_push: float = 0.15,
@@ -889,9 +889,9 @@ class SplinePlanner(Planner):
         # Count obstacle violations
         obst_hits = 0
         inside_obst = False
-        if len(pOLL_array) > 0:
+        if len(p_oll_array) > 0:
             for p in window_pts:
-                hit, _ = self._check_obsticle2(p, pOLL_array)
+                hit, _ = self._check_obsticle2(p, p_oll_array)
                 if hit:
                     if not inside_obst:
                         obst_hits += 1
@@ -933,7 +933,7 @@ class SplinePlanner(Planner):
         #    target_gate_yaw=target_gate_yaw,
         #    pGLL_array=pGLL_array,
         #    y_GBL_array=y_GBL_array,
-        #    pOLL_array=pOLL_array,
+        #    p_oll_array=p_oll_array,
         #    branch_name=branch_name,
         # )
 
@@ -968,7 +968,7 @@ class SplinePlanner(Planner):
         p_WLL_array: np.ndarray,
         pGLL_array: np.ndarray,
         y_GBL_array: np.ndarray,
-        pOLL_array: np.ndarray,
+        p_oll_array: np.ndarray,
         t_elapsed: float,
     ) -> np.ndarray:
         """Resolve all gate frame violations using 3-way branching per violation.
@@ -985,7 +985,7 @@ class SplinePlanner(Planner):
             p_WLL_array:  Current waypoint list (output of _build_waypoints).
             pGLL_array:   Gate centers.
             y_GBL_array:  Gate yaws.
-            pOLL_array:   Obstacle centers (used in scoring, not avoided here).
+            p_oll_array:   Obstacle centers (used in scoring, not avoided here).
             t_elapsed:    Current race time.
 
         Returns:
@@ -1008,7 +1008,7 @@ class SplinePlanner(Planner):
             #    pts=pts,
             #    pGLL_array=pGLL_array,
             #    y_GBL_array=y_GBL_array,
-            #    pOLL_array=pOLL_array,
+            #    p_oll_array=p_oll_array,
             #    tag=f"iter {outer_iter}",
             #    block=True,    # script pauses until you close the window
             # )
@@ -1040,7 +1040,7 @@ class SplinePlanner(Planner):
                 t_elapsed,
                 pGLL_array,
                 y_GBL_array,
-                pOLL_array,
+                p_oll_array,
             )
             branch_R = self._evaluate_gate_branch(
                 wps,
@@ -1052,7 +1052,7 @@ class SplinePlanner(Planner):
                 t_elapsed,
                 pGLL_array,
                 y_GBL_array,
-                pOLL_array,
+                p_oll_array,
             )
             branch_T = self._evaluate_gate_branch(
                 wps,
@@ -1064,7 +1064,7 @@ class SplinePlanner(Planner):
                 t_elapsed,
                 pGLL_array,
                 y_GBL_array,
-                pOLL_array,
+                p_oll_array,
             )
 
             # Print scores
@@ -1206,7 +1206,7 @@ class SplinePlanner(Planner):
     def _avoid_collisions(
         self,
         p_WLL_array: np.ndarray,
-        pOLL_array: np.ndarray,
+        p_oll_array: np.ndarray,
         pGLL_array: np.ndarray,
         y_GBL_array: np.ndarray,
         t_elapsed: float,
@@ -1215,7 +1215,7 @@ class SplinePlanner(Planner):
 
         Args:
             p_WLL_array:            Waypoints to be passed through.
-            pOLL_array:             Obsticle positions.
+            p_oll_array:             Obsticle positions.
             pGLL_array:             Gate positions.
             y_GBL_array:            Gate orientations.
             t_elapsed:              Time elapsed in the race so far.
@@ -1248,7 +1248,7 @@ class SplinePlanner(Planner):
 
             # Check each point from dense Spline for collision with obsticle
             for i, p in enumerate(pts):
-                hit_obsticle, obsticle_centre = self._check_obsticle2(p, pOLL_array)
+                hit_obsticle, obsticle_centre = self._check_obsticle2(p, p_oll_array)
                 hit_gate, gate_centre, gate_yaw = self._check_gate3(p, pGLL_array, y_GBL_array)
 
                 if hit_obsticle:
@@ -1341,7 +1341,7 @@ class SplinePlanner(Planner):
         target_gate_yaw: float,
         pGLL_array: np.ndarray,
         y_GBL_array: np.ndarray,
-        pOLL_array: np.ndarray,
+        p_oll_array: np.ndarray,
         branch_name: str,
         save_dir: str = "gate_branch_debug",
     ) -> str:
@@ -1358,7 +1358,7 @@ class SplinePlanner(Planner):
             target_gate_yaw: Yaw of the target gate.
             pGLL_array:      All gate centers.
             y_GBL_array:     All gate yaws.
-            pOLL_array:      Obstacle centers.
+            p_oll_array:      Obstacle centers.
             branch_name:     Label for the plot title (e.g., "Left", "Right", "Top").
             save_dir:        Output directory.
 
@@ -1372,7 +1372,7 @@ class SplinePlanner(Planner):
         os.makedirs(save_dir, exist_ok=True)
 
         # Constants — match planner.py
-        from lsy_drone_racing.control.Planner.planner import (
+        from lsy_drone_racing.control.planner.planner import (
             CLEARANCE,
             FRAME_OPENING,
             FRAME_WIDTH,
@@ -1450,11 +1450,11 @@ class SplinePlanner(Planner):
             self._plot_gate_frame_3d(ax3d, gc, gy, FRAME_WIDTH / 2, "gray", lw=1.0, alpha=0.4)
 
         # Obstacles (just markers in 3D for clarity)
-        if len(pOLL_array):
+        if len(p_oll_array):
             ax3d.scatter(
-                pOLL_array[:, 0],
-                pOLL_array[:, 1],
-                pOLL_array[:, 2],
+                p_oll_array[:, 0],
+                p_oll_array[:, 1],
+                p_oll_array[:, 2],
                 c="firebrick",
                 s=60,
                 marker="^",
@@ -1542,7 +1542,7 @@ class SplinePlanner(Planner):
         )
 
         # Obstacles (keep-out shells)
-        for o in pOLL_array:
+        for o in p_oll_array:
             ax_top.add_patch(
                 plt.Circle((o[0], o[1]), R_OBSTACLE + CLEARANCE, color="orange", alpha=0.2)
             )
@@ -1605,7 +1605,7 @@ class SplinePlanner(Planner):
         pts: np.ndarray,
         pGLL_array: np.ndarray,
         y_GBL_array: np.ndarray,
-        pOLL_array: np.ndarray,
+        p_oll_array: np.ndarray,
         tag: str = "",
         block: bool = True,
     ) -> None:
@@ -1621,12 +1621,12 @@ class SplinePlanner(Planner):
             pts:          Pre-sampled trajectory points (spline(t_dense)).
             pGLL_array:   Gate centers.
             y_GBL_array:  Gate yaws.
-            pOLL_array:   Obstacle centers.
+            p_oll_array:   Obstacle centers.
             tag:          Title suffix (e.g. "iter 0").
             block:        If True, pause script until window closed.
         """
         import matplotlib.pyplot as plt
-        from lsy_drone_racing.control.Planner.planner import (
+        from lsy_drone_racing.control.planner.planner import (
             CLEARANCE,
             FRAME_OPENING,
             FRAME_WIDTH,
@@ -1696,8 +1696,8 @@ class SplinePlanner(Planner):
             )
 
         # Obstacles
-        if len(pOLL_array):
-            for j, o in enumerate(pOLL_array):
+        if len(p_oll_array):
+            for j, o in enumerate(p_oll_array):
                 ax3d.scatter(o[0], o[1], o[2], c="firebrick", s=60, marker="^", alpha=0.7)
                 ax3d.text(o[0], o[1], 2.0, f"O{j}", fontsize=8, color="firebrick")
 
@@ -1766,7 +1766,7 @@ class SplinePlanner(Planner):
             )
 
         # Obstacles in xy
-        for j, o in enumerate(pOLL_array):
+        for j, o in enumerate(p_oll_array):
             ax_top.add_patch(
                 plt.Circle((o[0], o[1]), R_OBSTACLE + CLEARANCE, color="orange", alpha=0.2)
             )

@@ -64,8 +64,8 @@ class MPCCConfig:
     g: float = 9.81
 
     # --- limits (Table I) ---------------------------------------------------
-    T_min: float = 0.0
-    T_max: float = 7.0
+    t_min: float = 0.0
+    t_max: float = 7.0
     w_max: float = 10.0
     vtheta_max: float = 30.0  # progress speed cap = progress target
     dvtheta_max: float = 60.0

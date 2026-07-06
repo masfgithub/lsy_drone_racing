@@ -72,7 +72,7 @@ def simulate(n_steps: int = 50) -> tuple[TunnelReferencePath, tuple[np.ndarray, 
         qc_nom=1.0,
         qc_gate=120.0,
         gate_sigma=0.8,
-        W_nom=3.0,
+        w_nom=3.0,
         tunnel_sigma=1.2,
     )
     print(f"path length = {ref.length:.2f} m")

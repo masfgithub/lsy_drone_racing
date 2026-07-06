@@ -163,18 +163,18 @@ def _build_cost_expr(
     e_cnt = err - e_lag
 
     # Tracking cost
-    Q_att = cost_cfg["q_attitude"] * DM(np.eye(3))
+    q_att = cost_cfg["q_attitude"] * DM(np.eye(3))
     track = (
         (cost_cfg["q_lag"] + cost_cfg["q_lag_peak"] * qc_theta) * dot(e_lag, e_lag)
         + (cost_cfg["q_contour"] + cost_cfg["q_contour_peak"] * qc_theta) * dot(e_cnt, e_cnt)
-        + attitude.T @ Q_att @ attitude
+        + attitude.T @ q_att @ attitude
     )
 
     # Input smoothness cost
-    R_du = DM(
+    r_du = DM(
         np.diag([cost_cfg["r_thrust"], cost_cfg["r_roll"], cost_cfg["r_pitch"], cost_cfg["r_yaw"]])
     )
-    smooth = du.T @ R_du @ du
+    smooth = du.T @ r_du @ du
 
     # Speed incentive: reward progress, penalise speed near gates
     v_theta = sym["v_theta"]

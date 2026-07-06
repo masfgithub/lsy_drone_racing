@@ -75,17 +75,17 @@ class MPCCppController(MPCCController):
         # box constraints on states / inputs (identical to plain MPCC)
         ocp.constraints.idxbx = np.array([10, 11, 12, 13, 14, 15, 16, 18])
         ocp.constraints.lbx = np.array(
-            [-cfg.w_max, -cfg.w_max, -cfg.w_max, cfg.T_min, cfg.T_min, cfg.T_min, cfg.T_min, 0.0]
+            [-cfg.w_max, -cfg.w_max, -cfg.w_max, cfg.t_min, cfg.t_min, cfg.t_min, cfg.t_min, 0.0]
         )
         ocp.constraints.ubx = np.array(
             [
                 cfg.w_max,
                 cfg.w_max,
                 cfg.w_max,
-                cfg.T_max,
-                cfg.T_max,
-                cfg.T_max,
-                cfg.T_max,
+                cfg.t_max,
+                cfg.t_max,
+                cfg.t_max,
+                cfg.t_max,
                 cfg.vtheta_max,
             ]
         )
@@ -111,31 +111,31 @@ class MPCCppController(MPCCController):
             ocp.constraints.uh_e = big * np.ones(nh)
 
             # soften each group independently; slack arrays align with idxsh
-            soft_idx, zl, Zl = [], [], []
+            soft_idx, zl, zl_quad = [], [], []
             off = 0
             if cfg.use_tunnel:
                 if cfg.tunnel_soft:
                     soft_idx += list(range(off, off + N_TUNNEL))
                     zl += [cfg.tunnel_slack_lin] * N_TUNNEL
-                    Zl += [cfg.tunnel_slack_quad] * N_TUNNEL
+                    zl_quad += [cfg.tunnel_slack_quad] * N_TUNNEL
                 off += N_TUNNEL
             if cfg.use_obstacles:
                 if cfg.obstacle_soft:
                     soft_idx += list(range(off, off + cfg.n_obstacles))
                     zl += [cfg.obstacle_slack_lin] * cfg.n_obstacles
-                    Zl += [cfg.obstacle_slack_quad] * cfg.n_obstacles
+                    zl_quad += [cfg.obstacle_slack_quad] * cfg.n_obstacles
                 off += cfg.n_obstacles
 
             if soft_idx:
                 idx = np.array(soft_idx)
                 zl = np.array(zl)
-                Zl = np.array(Zl)
+                zl_quad = np.array(zl_quad)
                 ocp.constraints.idxsh = idx
                 ocp.constraints.idxsh_e = idx
                 ocp.cost.zl, ocp.cost.zu = zl, zl
-                ocp.cost.Zl, ocp.cost.Zu = Zl, Zl
+                ocp.cost.Zl, ocp.cost.Zu = zl_quad, zl_quad
                 ocp.cost.zl_e, ocp.cost.zu_e = zl, zl
-                ocp.cost.Zl_e, ocp.cost.Zu_e = Zl, Zl
+                ocp.cost.Zl_e, ocp.cost.Zu_e = zl_quad, zl_quad
 
         # solver options (identical to plain MPCC)
         so = ocp.solver_options

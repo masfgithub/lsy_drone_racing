@@ -160,7 +160,7 @@ def _build_mpccpp_model(
     e_lag = dot(tp_unit, err)
     e_cnt = err - e_lag * tp_unit
 
-    R_du = DM(
+    r_du = DM(
         np.diag([cost_cfg["r_thrust"], cost_cfg["r_roll"], cost_cfg["r_pitch"], cost_cfg["r_yaw"]])
     )
     # qc in [0, 1] is the gate-proximity bump (from the tunnel reference): 0 away from
@@ -172,7 +172,7 @@ def _build_mpccpp_model(
         + (cost_cfg["q_contour"] + cost_cfg["q_contour_peak"] * qc) * dot(e_cnt, e_cnt)
         + cost_cfg["q_attitude"] * dot(attitude, attitude)
     )
-    smooth = du.T @ R_du @ du
+    smooth = du.T @ r_du @ du
     # mu (p[11]) controls the progress incentive at runtime
     speed = -mu * v_theta + cost_cfg["w_speed_gate"] * qc * v_theta**2
 
@@ -362,32 +362,32 @@ def create_ocp_solver_mpccpp(
     # ── Soft slacks (optional per group) ─────────────────────────────────────
     soft_idx: list[int] = []
     zl_vals: list[float] = []
-    Zl_vals: list[float] = []
+    zl_quad_vals: list[float] = []
 
     if tunnel_soft:
         soft_idx += list(range(0, N_TUNNEL))
         zl_vals += [tunnel_slack_lin] * N_TUNNEL
-        Zl_vals += [tunnel_slack_quad] * N_TUNNEL
+        zl_quad_vals += [tunnel_slack_quad] * N_TUNNEL
 
     if obstacle_soft and n_obstacles > 0:
         soft_idx += list(range(N_TUNNEL, N_TUNNEL + n_obstacles))
         zl_vals += [obstacle_slack_lin] * n_obstacles
-        Zl_vals += [obstacle_slack_quad] * n_obstacles
+        zl_quad_vals += [obstacle_slack_quad] * n_obstacles
 
     if soft_idx:
         idx = np.array(soft_idx)
         zl = np.array(zl_vals, dtype=float)
-        Zl = np.array(Zl_vals, dtype=float)
+        zl_quad = np.array(zl_quad_vals, dtype=float)
         ocp.constraints.idxsh = idx
         ocp.constraints.idxsh_e = idx
         ocp.cost.zl = zl
         ocp.cost.zu = zl
-        ocp.cost.Zl = Zl
-        ocp.cost.Zu = Zl
+        ocp.cost.Zl = zl_quad
+        ocp.cost.Zu = zl_quad
         ocp.cost.zl_e = zl
         ocp.cost.zu_e = zl
-        ocp.cost.Zl_e = Zl
-        ocp.cost.Zu_e = Zl
+        ocp.cost.Zl_e = zl_quad
+        ocp.cost.Zu_e = zl_quad
 
     ocp.constraints.x0 = np.zeros(nx)
     ocp.parameter_values = np.zeros(npar)

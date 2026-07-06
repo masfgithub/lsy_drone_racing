@@ -14,7 +14,7 @@ from lsy_drone_racing.control.controller_interface import ControllerInterface
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from lsy_drone_racing.control.env_obs import EnvState_t
+    from lsy_drone_racing.control.env_obs import EnvState
 
 
 class NMPC(ControllerInterface):
@@ -22,7 +22,7 @@ class NMPC(ControllerInterface):
 
     def __init__(
         self,
-        obs: EnvState_t,
+        obs: EnvState,
         planner: dict,
         info: dict,
         config: dict,
@@ -89,7 +89,7 @@ class NMPC(ControllerInterface):
         }
         self._obstacles_information = {"d_min": 0.15, "total_height": 2.0}
 
-        gates_quat_wxyz = np.roll(obs.qTLT_array, 1, axis=-1)
+        gates_quat_wxyz = np.roll(obs.q_tlt_array, 1, axis=-1)
 
         if use_soft:
             from lsy_drone_racing.control.nmpc.env_soft_constraints import (
@@ -103,8 +103,10 @@ class NMPC(ControllerInterface):
             self._get_obstacle_objects = get_obstacle_objects
             self._set_env_params = set_env_params
 
-            self._gates = get_gate_objects(obs.pTLL_array, gates_quat_wxyz, self._gates_information)
-            self._obstacles = get_obstacle_objects(obs.pOLL_array, self._obstacles_information)
+            self._gates = get_gate_objects(
+                obs.p_tll_array, gates_quat_wxyz, self._gates_information
+            )
+            self._obstacles = get_obstacle_objects(obs.p_oll_array, self._obstacles_information)
 
             self._acados_ocp_solver, self._ocp, self._env = create_ocp_solver_soft(
                 self._T_HORIZON,
@@ -134,8 +136,10 @@ class NMPC(ControllerInterface):
             self._get_obstacle_objects = get_obstacle_objects
             self._set_env_params = set_env_params
 
-            self._gates = get_gate_objects(obs.pTLL_array, gates_quat_wxyz, self._gates_information)
-            self._obstacles = get_obstacle_objects(obs.pOLL_array, self._obstacles_information)
+            self._gates = get_gate_objects(
+                obs.p_tll_array, gates_quat_wxyz, self._gates_information
+            )
+            self._obstacles = get_obstacle_objects(obs.p_oll_array, self._obstacles_information)
 
             self._acados_ocp_solver, self._ocp = create_ocp_solver(
                 self._T_HORIZON,
@@ -167,12 +171,12 @@ class NMPC(ControllerInterface):
         self._finished = False
         self._infeas_counter = 0
 
-        self.set_initial_warm_start(pBLL=obs.pBLL, pos_ref=self._waypoints_pos[0])
+        self.set_initial_warm_start(p_bll=obs.p_bll, pos_ref=self._waypoints_pos[0])
         self._u_traj = np.array([self._acados_ocp_solver.get(k, "u") for k in range(self._N)])
 
-    def set_initial_warm_start(self, pBLL: np.ndarray, pos_ref: np.ndarray):
+    def set_initial_warm_start(self, p_bll: np.ndarray, pos_ref: np.ndarray):
         """Initialise solver with a straight-line trajectory."""
-        x0 = np.concatenate((pBLL, np.zeros(3), np.zeros(3), np.zeros(3)))
+        x0 = np.concatenate((p_bll, np.zeros(3), np.zeros(3), np.zeros(3)))
         x_ref = np.concatenate((pos_ref, np.zeros(3), np.zeros(3), np.zeros(3)))
         if self._use_input_rate:
             # Append the command-state block [r_cmd, p_cmd, y_cmd, f_cmd] = upright+hover.
@@ -186,7 +190,7 @@ class NMPC(ControllerInterface):
             self.u_pred[k] = np.zeros(self._nu)
 
     def control(
-        self, obs: EnvState_t, info: dict | None = None, tick_offset: float = 0.0
+        self, obs: EnvState, info: dict | None = None, tick_offset: float = 0.0
     ) -> NDArray[np.floating]:
         """Compute the next desired collective thrust and roll/pitch/yaw."""
         i = min(self._tick - tick_offset, self._tick_max - tick_offset)
@@ -194,9 +198,9 @@ class NMPC(ControllerInterface):
             self._finished = True
 
         # Initial state
-        rpy = R.from_quat(obs.qBLB).as_euler("xyz")
-        drpy = ang_vel2rpy_rates(obs.qBLB, obs.wBLL)
-        x0 = np.concatenate((obs.pBLL, rpy, obs.vBLL, drpy))
+        rpy = R.from_quat(obs.q_blb).as_euler("xyz")
+        drpy = ang_vel2rpy_rates(obs.q_blb, obs.w_bll)
+        x0 = np.concatenate((obs.p_bll, rpy, obs.v_bll, drpy))
         if self._use_input_rate:
             # Pin the command states at node 0 to the last applied command, which
             # makes the rate box a slew limit across the MPC-step boundary too.
@@ -245,11 +249,11 @@ class NMPC(ControllerInterface):
             self._acados_ocp_solver.set(k, "x", self.x_pred[k])
 
         # Update environment parameters
-        gates_quat_wxyz = np.roll(obs.qTLT_array, 1, axis=-1)
+        gates_quat_wxyz = np.roll(obs.q_tlt_array, 1, axis=-1)
         self._gates = self._get_gate_objects(
-            obs.pTLL_array, gates_quat_wxyz, self._gates_information
+            obs.p_tll_array, gates_quat_wxyz, self._gates_information
         )
-        self._obstacles = self._get_obstacle_objects(obs.pOLL_array, self._obstacles_information)
+        self._obstacles = self._get_obstacle_objects(obs.p_oll_array, self._obstacles_information)
         self._set_env_params(self._acados_ocp_solver, self._gates, self._obstacles, self._N)
 
         return self.solve(obs, i)
@@ -273,9 +277,9 @@ class NMPC(ControllerInterface):
             return self.x_pred[k][12:16].copy()
         return self.u_pred[step].copy()
 
-    def solve(self, obs: EnvState_t, i: int) -> np.ndarray:
+    def solve(self, obs: EnvState, i: int) -> np.ndarray:
         """Solve the OCP and return the control input."""
-        STATUS_MEANINGS = {
+        status_meanings = {
             0: "SUCCESS",
             1: "NLP_ITERATION_MAXIMUM",
             2: "INFEASIBLE",
@@ -289,7 +293,7 @@ class NMPC(ControllerInterface):
         # ── Acceptable solutions ──────────────────────────────────────────────
         if status in (0, 1, 3):
             if status != 0:
-                print(f"[MPC] {STATUS_MEANINGS[status]} — accepting with caution.")
+                print(f"[MPC] {status_meanings[status]} — accepting with caution.")
             self._infeas_counter = 0
             self._extract_solution()
             applied = self._applied_command(0)
@@ -300,7 +304,7 @@ class NMPC(ControllerInterface):
         # ── Unrecoverable — open-loop fallback ────────────────────────────────
         self._infeas_counter = min(self._infeas_counter + 1, self._N - 1)
         print(
-            f"[MPC] {STATUS_MEANINGS.get(status, 'UNKNOWN')} — "
+            f"[MPC] {status_meanings.get(status, 'UNKNOWN')} — "
             f"infeasible for {self._infeas_counter} consecutive steps. "
             f"Returning stored command[{self._infeas_counter}]."
         )

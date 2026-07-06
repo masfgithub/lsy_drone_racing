@@ -57,7 +57,7 @@ from lsy_drone_racing.control.nmpc.env_soft_constraints import (
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from lsy_drone_racing.control.env_obs import EnvState_t
+    from lsy_drone_racing.control.env_obs import EnvState
 
 
 def _gate_normals_from_quats(quats_wxyz: np.ndarray) -> np.ndarray:
@@ -110,7 +110,7 @@ class SplineTunnelReference:
 
     Exposes the same interface the controller/renderer/plotter rely on:
     ``eval``/``deriv1``/``deriv2``/``tangent``/``frame``/``width``/``qc`` and the
-    attributes ``length``/``gate_s``/``gate_centers``/``W_nom``/``H_nom``/
+    attributes ``length``/``gate_s``/``gate_centers``/``w_nom``/``h_nom``/
     ``gate_hw``/``gate_hh``/``tunnel_sigma``/``closed``.
     """
 
@@ -125,8 +125,8 @@ class SplineTunnelReference:
         gate_h: np.ndarray,
         gate_hw: np.ndarray,
         gate_hh: np.ndarray,
-        W_nom: float,
-        H_nom: float,
+        w_nom: float,
+        h_nom: float,
         tunnel_sigma: float,
         qc_nom: float = 1.0,
         qc_gate: float = 120.0,
@@ -147,8 +147,8 @@ class SplineTunnelReference:
         self.gate_h = np.asarray(gate_h, dtype=float)
         self.gate_hw = np.asarray(gate_hw, dtype=float)
         self.gate_hh = np.asarray(gate_hh, dtype=float)
-        self.W_nom = float(W_nom)
-        self.H_nom = float(H_nom)
+        self.w_nom = float(w_nom)
+        self.h_nom = float(h_nom)
         self.tunnel_sigma = float(tunnel_sigma)
         self.qc_nom = float(qc_nom)
         self.qc_gate = float(qc_gate)
@@ -219,8 +219,8 @@ class SplineTunnelReference:
         th = self._wrap(theta)
         d = th - self.gate_s
         g = np.exp(-0.5 * (d / self.tunnel_sigma) ** 2)
-        W = self.W_nom - float(np.sum((self.W_nom - self.gate_hw) * g))
-        H = self.H_nom - float(np.sum((self.H_nom - self.gate_hh) * g))
+        W = self.w_nom - float(np.sum((self.w_nom - self.gate_hw) * g))
+        H = self.h_nom - float(np.sum((self.h_nom - self.gate_hh) * g))
         return max(W, self._floor), max(H, self._floor)
 
     def qc(self, theta: float) -> float:
@@ -321,8 +321,8 @@ def _build_spline_tunnel_ref(
     gate_quats_wxyz: np.ndarray,
     gate_w_half: float,
     gate_h_half: float,
-    W_nom: float,
-    H_nom: float,
+    w_nom: float,
+    h_nom: float,
     tunnel_sigma: float,
     frame_up: tuple = (0.0, 0.0, 1.0),
     qc_nom: float = 0.0,
@@ -340,8 +340,8 @@ def _build_spline_tunnel_ref(
         gate_quats_wxyz: (M, 4) gate orientation quaternions (wxyz).
         gate_w_half:     Gate cross-section half-width target at the gates (m).
         gate_h_half:     Gate cross-section half-height target at the gates (m).
-        W_nom:           Nominal tunnel half-width between gates (m).
-        H_nom:           Nominal tunnel half-height between gates (m).
+        w_nom:           Nominal tunnel half-width between gates (m).
+        h_nom:           Nominal tunnel half-height between gates (m).
         tunnel_sigma:    Gaussian sigma for the tunnel pinch (arc-length, m).
         frame_up:        World up-vector for gate lateral/vertical axes.
         qc_nom:          Gate-proximity bump multiplier away from gates (0..1); scales
@@ -396,8 +396,8 @@ def _build_spline_tunnel_ref(
         gate_h=gh,
         gate_hw=gate_hw,
         gate_hh=gate_hh,
-        W_nom=W_nom,
-        H_nom=(W_nom if H_nom is None else H_nom),
+        w_nom=w_nom,
+        h_nom=(w_nom if h_nom is None else h_nom),
         tunnel_sigma=tunnel_sigma,
         qc_nom=qc_nom,
         qc_gate=qc_gate,
@@ -415,13 +415,13 @@ class MPCCpp(ControllerInterface):
     # 4.7 seconds
     #    def __init__(
     #        self,
-    #        obs: EnvState_t,
+    #        obs: EnvState,
     #        planner: dict,
     #        info: dict,
     #        config: dict,
     #        t_total: int,
-    #        N_horizon: int = 20,
-    #        T_horizon: float = 0.7,
+    #        n_horizon: int = 20,
+    #        t_horizon: float = 0.7,
     #        mu: float = 13.0,
     #        q_lag: float = 80.0,
     #        q_lag_peak: float = 50.0,
@@ -433,8 +433,8 @@ class MPCCpp(ControllerInterface):
     #        r_pitch: float = 0.3,
     #        r_yaw: float = 0.5,
     #        w_speed_gate: float = 4.0,
-    #        W_nom: float = 0.3,
-    #        H_nom: float = 0.3,
+    #        w_nom: float = 0.3,
+    #        h_nom: float = 0.3,
     #        tunnel_sigma: float = 0.4,
     #        v_theta_max: float = 3.0,
     #        df_cmd_rate_max: float | None = 5.0,
@@ -459,13 +459,13 @@ class MPCCpp(ControllerInterface):
     # 5.1 seconds
     #    def __init__(
     #        self,
-    #        obs: EnvState_t,
+    #        obs: EnvState,
     #        planner: dict,
     #        info: dict,
     #        config: dict,
     #        t_total: int,
-    #        N_horizon: int = 20,
-    #        T_horizon: float = 0.7,
+    #        n_horizon: int = 20,
+    #        t_horizon: float = 0.7,
     #        mu: float = 12.0,
     #        q_lag: float = 80.0,
     #        q_lag_peak: float = 50.0,
@@ -477,8 +477,8 @@ class MPCCpp(ControllerInterface):
     #        r_pitch: float = 0.3,
     #        r_yaw: float = 0.5,
     #        w_speed_gate: float = 5.0,
-    #        W_nom: float = 0.3,
-    #        H_nom: float = 0.3,
+    #        w_nom: float = 0.3,
+    #        h_nom: float = 0.3,
     #        tunnel_sigma: float = 0.4,
     #        v_theta_max: float = 3.0,
     #        df_cmd_rate_max: float | None = 5.0,
@@ -502,13 +502,13 @@ class MPCCpp(ControllerInterface):
 
     def __init__(
         self,
-        obs: EnvState_t,
+        obs: EnvState,
         planner: dict,
         info: dict,
         config: dict,
         t_total: int,
-        N_horizon: int = 40,
-        T_horizon: float = 0.7,
+        n_horizon: int = 40,
+        t_horizon: float = 0.7,
         mu: float = 8.0,
         q_lag: float = 80.0,
         q_lag_peak: float = 50.0,
@@ -520,8 +520,8 @@ class MPCCpp(ControllerInterface):
         r_pitch: float = 0.3,
         r_yaw: float = 0.5,
         w_speed_gate: float = 5.0,
-        W_nom: float = 0.3,
-        H_nom: float = 0.3,
+        w_nom: float = 0.3,
+        h_nom: float = 0.3,
         tunnel_sigma: float = 0.4,
         v_theta_max: float = 3.0,
         df_cmd_rate_max: float | None = 5.0,
@@ -550,8 +550,8 @@ class MPCCpp(ControllerInterface):
             info:               Initial environment information.
             config:             Race configuration (config.env.freq, config.sim.drone_model).
             t_total:            Total trajectory duration in seconds.
-            N_horizon:          MPC prediction horizon (steps).
-            T_horizon:          Horizon duration (seconds).
+            n_horizon:          MPC prediction horizon (steps).
+            t_horizon:          Horizon duration (seconds).
             mu:                 Progress incentive weight (larger = faster).
             q_lag:              Lag-error tracking weight.
             q_lag_peak:         Extra lag-error weight near gates.
@@ -563,15 +563,15 @@ class MPCCpp(ControllerInterface):
             r_pitch:            Pitch-increment smoothness weight.
             r_yaw:              Yaw-increment smoothness weight.
             w_speed_gate:       Speed penalty coefficient near gates.
-            W_nom:              Nominal tunnel half-width between gates (m).
-            H_nom:              Nominal tunnel half-height between gates (m).
+            w_nom:              Nominal tunnel half-width between gates (m).
+            h_nom:              Nominal tunnel half-height between gates (m).
             tunnel_sigma:       Gaussian sigma for tunnel pinch at gates (m arc-length).
             v_theta_max:        Max progress speed v_theta (m/s of arc length). Must
                                 exceed the drone's along-track speed or theta lags.
             df_cmd_rate_max:    Slew-rate limit on the collective-thrust command
                                 (|df_cmd| <= value, N/s). Finite value activates it;
                                 None => inactive. Per step the command moves at most
-                                df_cmd_rate_max * (T_horizon / N_horizon).
+                                df_cmd_rate_max * (t_horizon / n_horizon).
             dr_cmd_rate_max:    Slew-rate limit on the roll command (rad/s); None off.
             dp_cmd_rate_max:    Slew-rate limit on the pitch command (rad/s); None off.
             dy_cmd_rate_max:    Slew-rate limit on the yaw command (rad/s); None off.
@@ -600,13 +600,13 @@ class MPCCpp(ControllerInterface):
                                 the backup that keeps the drone off the physical
                                 frame if the soft tunnel is violated.
             gate_weight:        Weight of the soft gate-frame penalty.
-            n_obstacles:        OCP obstacle slots. Defaults to len(obs.pOLL_array).
+            n_obstacles:        OCP obstacle slots. Defaults to len(obs.p_oll_array).
         """
         super().__init__(obs, planner, info, config, t_total)
 
-        self._N = N_horizon
-        self._Tf = T_horizon
-        self._dt = T_horizon / N_horizon
+        self._N = n_horizon
+        self._Tf = t_horizon
+        self._dt = t_horizon / n_horizon
         self._mu = float(mu)
         self._finished = False
         self._tick = 0
@@ -630,26 +630,26 @@ class MPCCpp(ControllerInterface):
         self._gravity = -float(self.drone_params["gravity_vec"][-1])
 
         # Gate / obstacle objects for rendering (updated each control step)
-        gates_quat_wxyz = np.roll(obs.qTLT_array, 1, axis=-1)
-        self._gates = get_gate_objects(obs.pTLL_array, gates_quat_wxyz, self._gates_information)
-        self._obstacles = get_obstacle_objects(obs.pOLL_array, self._obstacles_information)
+        gates_quat_wxyz = np.roll(obs.q_tlt_array, 1, axis=-1)
+        self._gates = get_gate_objects(obs.p_tll_array, gates_quat_wxyz, self._gates_information)
+        self._obstacles = get_obstacle_objects(obs.p_oll_array, self._obstacles_information)
 
-        n_obs = len(obs.pOLL_array) if n_obstacles is None else n_obstacles
+        n_obs = len(obs.p_oll_array) if n_obstacles is None else n_obstacles
         self._n_obstacles = n_obs
 
         # Gate-frame penalty slots: one per gate (all gates, fixed count), so the
         # parameter size stays constant; passed gates contribute ~0 penalty.
         self._gate_soft = bool(gate_soft)
         self._gate_weight = float(gate_weight)
-        self._n_gates = len(obs.pTLL_array) if self._gate_soft else 0
+        self._n_gates = len(obs.p_tll_array) if self._gate_soft else 0
         self._gate_frame_params = np.zeros((self._n_gates, WEDGE_NP))
-        self._update_gate_frame_params(obs.pTLL_array, gates_quat_wxyz)
+        self._update_gate_frame_params(obs.p_tll_array, gates_quat_wxyz)
 
         self._npar = num_params(n_obs, self._n_gates)
 
         # Obstacle parameter slots [xo, yo, ro] (updated online each step)
         self._obst_params = np.zeros((n_obs, OBST_DIM))
-        self._update_obst_params(obs.pOLL_array)
+        self._update_obst_params(obs.p_oll_array)
 
         # Build the tunnel reference path.
         # The CENTERLINE is the planner's racing line -- either a Trajectory
@@ -657,10 +657,10 @@ class MPCCpp(ControllerInterface):
         # (warp/basic planner). It already threads the gates; we reparameterize it
         # to arc length and use it as pd(theta). Gates are PROJECTED onto it to
         # locate the pinches, so theta runs 0..ref.length over the racing line.
-        # Only the *remaining* gates (pTLL_index:) are pinched, matching the
+        # Only the *remaining* gates (p_tll_index:) are pinched, matching the
         # online planner, which plans from the current target gate onward.
-        self._W_nom = float(W_nom)
-        self._H_nom = float(H_nom)
+        self._w_nom = float(w_nom)
+        self._h_nom = float(h_nom)
         # Tunnel cross-section target at the gates (half the hole opening).
         # self._gates_information["hole_width"] = 0.1
         # self._gates_information["hole_height"] = 0.1
@@ -673,8 +673,8 @@ class MPCCpp(ControllerInterface):
         self._tunnel_mode = str(tunnel_mode)
         self._gate_tangent_len = float(gate_tangent_len)
 
-        gi = int(getattr(obs, "pTLL_index", 0))
-        gate_pos = np.asarray(obs.pTLL_array, dtype=float)[gi:]
+        gi = int(getattr(obs, "p_tll_index", 0))
+        gate_pos = np.asarray(obs.p_tll_array, dtype=float)[gi:]
         gate_quat = gates_quat_wxyz[gi:]
         self._ref = _build_spline_tunnel_ref(
             centerline=self._centerline_source(planner, obs, gate_pos, gate_quat),
@@ -682,8 +682,8 @@ class MPCCpp(ControllerInterface):
             gate_quats_wxyz=gate_quat,
             gate_w_half=self._gate_w_half,
             gate_h_half=self._gate_h_half,
-            W_nom=W_nom,
-            H_nom=H_nom,
+            w_nom=w_nom,
+            h_nom=h_nom,
             tunnel_sigma=tunnel_sigma,
             qc_gate=qc_gate,
             gate_sigma=gate_sigma,
@@ -709,8 +709,8 @@ class MPCCpp(ControllerInterface):
         from lsy_drone_racing.control.mpcc.mpccpp_setup import create_ocp_solver_mpccpp
 
         self._solver, self._ocp = create_ocp_solver_mpccpp(
-            N=N_horizon,
-            Tf=T_horizon,
+            N=n_horizon,
+            Tf=t_horizon,
             parameters=self.drone_params,
             n_obstacles=n_obs,
             cost_cfg=cost_cfg,
@@ -732,7 +732,7 @@ class MPCCpp(ControllerInterface):
         self._nu = self._ocp.model.u.rows()
 
         # Always start at theta=0 (beginning of the tunnel path).
-        # Projecting obs.pBLL is unreliable: if the drone starts near the last
+        # Projecting obs.p_bll is unreliable: if the drone starts near the last
         # gate (geometrically closest), projection returns a theta near the end.
         theta_0 = 0.0
         self._theta_pred = np.arange(self._N + 1) * self._dt * 1.0
@@ -750,7 +750,7 @@ class MPCCpp(ControllerInterface):
     # ──────────────────────────────────────────────────────────────────────────
 
     def _centerline_source(
-        self, planner: object, obs: EnvState_t, gate_pos: np.ndarray, gate_quat: np.ndarray
+        self, planner: object, obs: EnvState, gate_pos: np.ndarray, gate_quat: np.ndarray
     ) -> np.ndarray | CubicSpline:
         """Pick the tunnel centerline according to ``self._tunnel_mode``.
 
@@ -761,7 +761,7 @@ class MPCCpp(ControllerInterface):
         """
         if self._tunnel_mode == "gate":
             normals = _gate_normals_from_quats(gate_quat)
-            return _gate_anchored_centerline(obs.pBLL, gate_pos, normals, self._gate_tangent_len)
+            return _gate_anchored_centerline(obs.p_bll, gate_pos, normals, self._gate_tangent_len)
         return _planner_centerline(planner)
 
     @staticmethod
@@ -769,8 +769,8 @@ class MPCCpp(ControllerInterface):
         gate_positions: np.ndarray,
         gate_quats_wxyz: np.ndarray,
         gates_info: dict,
-        W_nom: float,
-        H_nom: float,
+        w_nom: float,
+        h_nom: float,
         tunnel_sigma: float,
     ) -> TunnelReferencePath:
         """Build a TunnelReferencePath from gate poses and geometry."""
@@ -783,8 +783,8 @@ class MPCCpp(ControllerInterface):
             gate_w_half=gate_w_half,
             gate_h_half=gate_h_half,
             closed=False,
-            W_nom=W_nom,
-            H_nom=H_nom,
+            w_nom=w_nom,
+            h_nom=h_nom,
             tunnel_sigma=tunnel_sigma,
         )
 
@@ -861,7 +861,7 @@ class MPCCpp(ControllerInterface):
         x[14] = theta
         return x
 
-    def _init_warmstart(self, obs: EnvState_t) -> None:
+    def _init_warmstart(self, obs: EnvState) -> None:
         """Set up solver warm start and initialise _x_warm / _u_warm caches."""
         self._x_warm = []
         self._u_warm = []
@@ -880,32 +880,32 @@ class MPCCpp(ControllerInterface):
     # ControllerInterface implementation
     # ──────────────────────────────────────────────────────────────────────────
 
-    def control(self, obs: EnvState_t, info: dict | None = None) -> NDArray[np.floating]:
+    def control(self, obs: EnvState, info: dict | None = None) -> NDArray[np.floating]:
         """Compute attitude + collective-thrust command via MPCC++.
 
         Returns:
             np.ndarray of shape (4,): [roll_cmd, pitch_cmd, yaw_cmd, thrust_cmd].
         """
         # Update gate/obstacle objects for rendering
-        gates_quat_wxyz = np.roll(obs.qTLT_array, 1, axis=-1)
-        self._gates = get_gate_objects(obs.pTLL_array, gates_quat_wxyz, self._gates_information)
-        self._obstacles = get_obstacle_objects(obs.pOLL_array, self._obstacles_information)
-        self._update_obst_params(obs.pOLL_array)
-        self._update_gate_frame_params(obs.pTLL_array, gates_quat_wxyz)
+        gates_quat_wxyz = np.roll(obs.q_tlt_array, 1, axis=-1)
+        self._gates = get_gate_objects(obs.p_tll_array, gates_quat_wxyz, self._gates_information)
+        self._obstacles = get_obstacle_objects(obs.p_oll_array, self._obstacles_information)
+        self._update_obst_params(obs.p_oll_array)
+        self._update_gate_frame_params(obs.p_tll_array, gates_quat_wxyz)
 
         if self._last_theta >= self._ref.length:
             self._finished = True
 
         # Assemble initial state from obs + internal controller state
-        rpy = self._rpy_from_quat(obs.qBLB)
+        rpy = self._rpy_from_quat(obs.q_blb)
         x0 = np.array(
             [
-                obs.pBLL[0],
-                obs.pBLL[1],
-                obs.pBLL[2],
-                obs.vBLL[0],
-                obs.vBLL[1],
-                obs.vBLL[2],
+                obs.p_bll[0],
+                obs.p_bll[1],
+                obs.p_bll[2],
+                obs.v_bll[0],
+                obs.v_bll[1],
+                obs.v_bll[2],
                 rpy[0],
                 rpy[1],
                 rpy[2],
@@ -985,13 +985,13 @@ class MPCCpp(ControllerInterface):
         """No-op: MPCC++ reference is built from gate geometry, not the planner spline."""
         pass
 
-    def replan_reference(self, trajectory: object, obs: EnvState_t) -> None:
+    def replan_reference(self, trajectory: object, obs: EnvState) -> None:
         """Adopt a freshly planned trajectory as the new tunnel centerline.
 
         The online planner re-roots its trajectory at the *current drone
         position*, so adopting it means:
           1. rebuild the arc-length centerline + tube from trajectory.positions
-             and the remaining gates (pTLL_index:),
+             and the remaining gates (p_tll_index:),
           2. reset progress theta to 0 -- the drone IS the new start,
           3. re-seed theta_pred and the warm start along the new centerline.
 
@@ -1003,9 +1003,9 @@ class MPCCpp(ControllerInterface):
                         with 'des_pos_spline'.
             obs:        Current observation (drone pose + remaining gate poses).
         """
-        gi = int(getattr(obs, "pTLL_index", 0))
-        gate_pos = np.asarray(obs.pTLL_array, dtype=float)[gi:]
-        gate_quat = np.roll(obs.qTLT_array, 1, axis=-1)[gi:]
+        gi = int(getattr(obs, "p_tll_index", 0))
+        gate_pos = np.asarray(obs.p_tll_array, dtype=float)[gi:]
+        gate_quat = np.roll(obs.q_tlt_array, 1, axis=-1)[gi:]
 
         self._ref = _build_spline_tunnel_ref(
             centerline=self._centerline_source(trajectory, obs, gate_pos, gate_quat),
@@ -1013,8 +1013,8 @@ class MPCCpp(ControllerInterface):
             gate_quats_wxyz=gate_quat,
             gate_w_half=self._gate_w_half,
             gate_h_half=self._gate_h_half,
-            W_nom=self._W_nom,
-            H_nom=self._H_nom,
+            w_nom=self._w_nom,
+            h_nom=self._h_nom,
             tunnel_sigma=self._tunnel_sigma,
             qc_gate=self._qc_gate,
             gate_sigma=self._gate_sigma,
@@ -1025,7 +1025,7 @@ class MPCCpp(ControllerInterface):
         # theta resets to the start: the new centerline begins at the drone.
         self._last_theta = 0.0
         self._finished = False
-        v_guess = float(np.clip(np.linalg.norm(obs.vBLL), 0.5, self._v_theta_max))
+        v_guess = float(np.clip(np.linalg.norm(obs.v_bll), 0.5, self._v_theta_max))
         self._theta_pred = np.clip(
             np.arange(self._N + 1) * self._dt * v_guess, 0.0, self._ref.length
         )

@@ -26,18 +26,18 @@ from lsy_drone_racing.control.nmpc.nmpc import NMPC
 CONTROLLER_TYPE = "mpccpp"
 
 # Active planner: "Smart" | "Simple"
-PLANNER_TYPE = "Simple"
+PLANNER_TYPE = "Smart"
 
 if PLANNER_TYPE == "Smart":
-    from lsy_drone_racing.control.Planner.smart_planner import SplinePlanner
+    from lsy_drone_racing.control.planner.smart_planner import SplinePlanner
 elif PLANNER_TYPE == "Simple":
-    from lsy_drone_racing.control.Planner.SplinePlanner_2 import SplinePlanner
+    from lsy_drone_racing.control.planner.spline_planner_2 import SplinePlanner
 
 if TYPE_CHECKING:
     from crazyflow import Sim
     from numpy.typing import NDArray
 
-    from lsy_drone_racing.control.env_obs import EnvState_t
+    from lsy_drone_racing.control.env_obs import EnvState
 
 
 def _draw_wedge_gate(
@@ -71,7 +71,7 @@ def _draw_wedge_gate(
         rgba = np.array([0.0, 0.5, 1.0, 1.0])
 
     qw, qx, qy, qz = quaternion / np.linalg.norm(quaternion)
-    R_mat = np.array(
+    r_mat = np.array(
         [
             [1 - 2 * (qy**2 + qz**2), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
             [2 * (qx * qy + qz * qw), 1 - 2 * (qx**2 + qz**2), 2 * (qy * qz - qx * qw)],
@@ -80,7 +80,7 @@ def _draw_wedge_gate(
     )
 
     def to_world(lv: np.ndarray) -> np.ndarray:
-        return np.asarray(position) + R_mat @ lv
+        return np.asarray(position) + r_mat @ lv
 
     def edge(a: np.ndarray, b: np.ndarray):
         draw_capsule(sim, to_world(a), to_world(b), radius=radius, rgba=rgba, cylinder=True)
@@ -119,26 +119,26 @@ def _draw_wedge_gate(
             return v
 
         # 4 base corners
-        B0 = pt(base_d, -a_x, h_perp_base)
-        B1 = pt(base_d, a_x, h_perp_base)
-        B2 = pt(base_d, a_x, -h_perp_base)
-        B3 = pt(base_d, -a_x, -h_perp_base)
+        b0 = pt(base_d, -a_x, h_perp_base)
+        b1 = pt(base_d, a_x, h_perp_base)
+        b2 = pt(base_d, a_x, -h_perp_base)
+        b3 = pt(base_d, -a_x, -h_perp_base)
         # 2 tip corners
-        T0 = pt(tip_d, 0.0, h_perp_tip)
-        T1 = pt(tip_d, 0.0, -h_perp_tip)
+        t0 = pt(tip_d, 0.0, h_perp_tip)
+        t1 = pt(tip_d, 0.0, -h_perp_tip)
 
         # Base rectangle (4 edges)
-        edge(B0, B1)
-        edge(B1, B2)
-        edge(B2, B3)
-        edge(B3, B0)
+        edge(b0, b1)
+        edge(b1, b2)
+        edge(b2, b3)
+        edge(b3, b0)
         # Slant edges base → tip (4 edges)
-        edge(B0, T0)
-        edge(B1, T0)
-        edge(B2, T1)
-        edge(B3, T1)
+        edge(b0, t0)
+        edge(b1, t0)
+        edge(b2, t1)
+        edge(b3, t1)
         # Tip edge (1 edge)
-        edge(T0, T1)
+        edge(t0, t1)
 
     # Left:   depth=y(1), tip toward +y; base at -hl, tip at -hw
     draw_prism(-hl, -hw, depth_idx=1, ax_idx=0, perp_idx=2, h_perp_base=hh, h_perp_tip=hho)
@@ -331,7 +331,7 @@ def plot_tube_width_profile(
     W, H = WH[:, 0], WH[:, 1]
 
     gate_s = np.atleast_1d(np.asarray(getattr(ref, "gate_s", []), dtype=float))
-    W_nom = float(getattr(ref, "W_nom", np.nan))
+    w_nom = float(getattr(ref, "w_nom", np.nan))
     gate_hw = np.atleast_1d(np.asarray(getattr(ref, "gate_hw", []), dtype=float))
     sigma = float(getattr(ref, "tunnel_sigma", np.nan))
     closed = bool(getattr(ref, "closed", False))
@@ -342,15 +342,15 @@ def plot_tube_width_profile(
 
     # ---- top panel: the cross-section the solver sees ----------------------
     ax = axs[0, 0]
-    top = max(W.max(), H.max(), W_nom if np.isfinite(W_nom) else 0.0) * 1.18 + 1e-3
+    top = max(W.max(), H.max(), w_nom if np.isfinite(w_nom) else 0.0) * 1.18 + 1e-3
     ax.set_ylim(0, top)
     ax.plot(thetas, W, color="tab:blue", lw=2.0, label=r"$W(\theta)$ half-width")
     if not np.allclose(H, W):
         ax.plot(thetas, H, color="tab:purple", lw=1.8, label=r"$H(\theta)$ half-height")
-    if np.isfinite(W_nom):
-        ax.axhline(W_nom, color="0.45", ls="--", lw=1.1)
+    if np.isfinite(w_nom):
+        ax.axhline(w_nom, color="0.45", ls="--", lw=1.1)
         ax.text(
-            L * 0.01, W_nom, f" W_nom={W_nom:.3g}", color="0.35", fontsize=9, va="bottom", ha="left"
+            L * 0.01, w_nom, f" w_nom={w_nom:.3g}", color="0.35", fontsize=9, va="bottom", ha="left"
         )
     if gate_hw.size:
         gt = float(np.min(gate_hw))
@@ -453,8 +453,8 @@ class DroneRacingPipeline(Controller):
             trajectory = self._planner.plan(env_states, 0.0)
             self._controller = MPCCpp(env_states, trajectory, info, config, t_total)
             # Replan trigger bookkeeping.
-            self.nominal_gates_position = env_states.pTLL_array
-            self.nominal_obstacles_position = env_states.pOLL_array
+            self.nominal_gates_position = env_states.p_tll_array
+            self.nominal_obstacles_position = env_states.p_oll_array
             self._t_replan = 0.0
 
         elif CONTROLLER_TYPE == "mpcc":
@@ -489,8 +489,8 @@ class DroneRacingPipeline(Controller):
             # The planner re-roots at the current drone position; the controller
             # then rebuilds its tube and resets theta to 0 (drone = new start).
             if self._force_replan or self._get_replan_reason(env_states):
-                self.nominal_gates_position = env_states.pTLL_array
-                self.nominal_obstacles_position = env_states.pOLL_array
+                self.nominal_gates_position = env_states.p_tll_array
+                self.nominal_obstacles_position = env_states.p_oll_array
                 trajectory = self._planner.plan(env_states, self._tick / self._freq)
                 self._t_replan = self._tick / self._freq
                 self._controller.replan_reference(trajectory, env_states)
@@ -502,14 +502,17 @@ class DroneRacingPipeline(Controller):
         self._planner.replan()
         return self._controller.control(env_states, info)
 
-    def _get_replan_reason(self, env_states: EnvState_t) -> bool:
+    def _get_replan_reason(self, env_states: EnvState) -> bool:
         """True if the active gate or any obstacle moved more than 1 cm."""
-        idx = int(getattr(env_states, "pTLL_index", 0))
-        if np.linalg.norm(self.nominal_gates_position[idx] - env_states.pTLL_array[idx]) > 0.01:
+        idx = int(getattr(env_states, "p_tll_index", 0))
+        if np.linalg.norm(self.nominal_gates_position[idx] - env_states.p_tll_array[idx]) > 0.01:
             return True
-        n = min(len(self.nominal_obstacles_position), len(env_states.pOLL_array))
+        n = min(len(self.nominal_obstacles_position), len(env_states.p_oll_array))
         for i in range(n):
-            if np.linalg.norm(self.nominal_obstacles_position[i] - env_states.pOLL_array[i]) > 0.01:
+            if (
+                np.linalg.norm(self.nominal_obstacles_position[i] - env_states.p_oll_array[i])
+                > 0.01
+            ):
                 return True
         return False
 

@@ -15,7 +15,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 if TYPE_CHECKING:
-    from lsy_drone_racing.control.env_obs import EnvState_t
+    from lsy_drone_racing.control.env_obs import EnvState
 
 DEFAULT_FRAME_WIDTH = 0.72
 DEFAULT_FRAME_OPENING = 0.4
@@ -55,7 +55,7 @@ class ReplanDebugger:
 
     def dump(
         self,
-        env_states: EnvState_t,
+        env_states: EnvState,
         trajectory: object,
         planner: object | None = None,
         tag: str | None = None,
@@ -76,12 +76,12 @@ class ReplanDebugger:
             The path the figure was saved to.
         """
         # --- pull data out of the inputs --------------------------------------
-        start = np.asarray(env_states.pBLL, dtype=float)
-        gates = np.asarray(env_states.pTLL_array, dtype=float)
-        quats = np.asarray(env_states.qTLT_array, dtype=float)
+        start = np.asarray(env_states.p_bll, dtype=float)
+        gates = np.asarray(env_states.p_tll_array, dtype=float)
+        quats = np.asarray(env_states.q_tlt_array, dtype=float)
         yaws = R.from_quat(quats).as_euler("ZYX")[:, 0] if len(quats) else np.zeros(0)
-        obstacles = np.asarray(env_states.pOLL_array, dtype=float).reshape(-1, 3)
-        gate_idx = int(getattr(env_states, "pTLL_index", 0))
+        obstacles = np.asarray(env_states.p_oll_array, dtype=float).reshape(-1, 3)
+        gate_idx = int(getattr(env_states, "p_tll_index", 0))
 
         if hasattr(trajectory, "positions"):
             traj = np.asarray(trajectory.positions, dtype=float)

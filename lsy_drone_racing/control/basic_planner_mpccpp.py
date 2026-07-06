@@ -34,7 +34,7 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 
 if TYPE_CHECKING:
-    from lsy_drone_racing.control.env_obs import EnvState_t
+    from lsy_drone_racing.control.env_obs import EnvState
 
 
 # Hand-tuned racing line: ordered waypoints that already thread every gate.
@@ -60,7 +60,7 @@ class BasicPlannerMPCCpp:
 
     def __init__(
         self,
-        obs: "EnvState_t",
+        obs: "EnvState",
         config: dict,
         t_total: int,
         warp_sigma: float = 0.8,
@@ -80,8 +80,8 @@ class BasicPlannerMPCCpp:
         """
         self._freq = config.env.freq
         self._t_total = t_total
-        self._nominal_gates = obs.pTLL_array.copy()  # warp anchor (initial poses)
-        self._start_pos = obs.pBLL.copy()
+        self._nominal_gates = obs.p_tll_array.copy()  # warp anchor (initial poses)
+        self._start_pos = obs.p_bll.copy()
         self._warp_sigma = float(warp_sigma)
         self._gate_move_tol = float(gate_move_tol)
 
@@ -115,7 +115,7 @@ class BasicPlannerMPCCpp:
         self._last_gates = self._nominal_gates.copy()
         return self._get_dict()
 
-    def replan(self, obs: "EnvState_t | None" = None) -> dict:
+    def replan(self, obs: "EnvState | None" = None) -> dict:
         """Re-fit the racing line to the current gate poses (warp), if they moved.
 
         Args:
@@ -127,7 +127,7 @@ class BasicPlannerMPCCpp:
         if obs is None or self._waypoints is None:
             return self._get_dict()
 
-        gates = np.asarray(obs.pTLL_array, dtype=float)
+        gates = np.asarray(obs.p_tll_array, dtype=float)
         if (
             self._last_gates is not None
             and gates.shape == self._last_gates.shape

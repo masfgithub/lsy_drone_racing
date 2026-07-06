@@ -93,10 +93,10 @@ def create_ocp_solver_soft(
 
     # ── Soft env constraints ──────────────────────────────────────────────────
     # Must be done before cost setup so penalty_expr is available.
-    pBLL = ocp.model.x[:3]
+    p_bll = ocp.model.x[:3]
     env = create_soft_env_constraints(
         model=ocp.model,
-        pBLL=pBLL,
+        p_bll=p_bll,
         gates=gates,
         obstacles=obstacles,
         gate_weight=gate_weight,

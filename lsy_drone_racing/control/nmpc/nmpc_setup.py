@@ -201,8 +201,8 @@ def create_ocp_solver(
         ocp.constraints.idxbu = np.array([0, 1, 2, 3])
 
     # Set environmental constraints
-    pBLL = ocp.model.x[:3]
-    env = create_env_constraints(model=ocp.model, pBLL=pBLL, gates=gates, obstacles=obstacles)
+    p_bll = ocp.model.x[:3]
+    env = create_env_constraints(model=ocp.model, p_bll=p_bll, gates=gates, obstacles=obstacles)
     ocp.constraints.lh = env["lh"]
     ocp.constraints.uh = env["uh"]
     ocp.constraints.lh_e = env["lh"]

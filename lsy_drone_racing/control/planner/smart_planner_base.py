@@ -10,7 +10,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 if TYPE_CHECKING:
-    from lsy_drone_racing.control.env_obs import EnvState_t
+    from lsy_drone_racing.control.env_obs import EnvState
 
 __all__ = ["Trajectory", "Planner", "DEFAULT_MAX_SPEED"]
 
@@ -40,7 +40,7 @@ class Trajectory:
 class Planner(ABC):
     """Abstract base class for drone trajectory planners."""
 
-    def __init__(self, obs: EnvState_t, info: dict, config: dict):
+    def __init__(self, obs: EnvState, info: dict, config: dict):
         """Initialize Planner Class.
 
         Arg:
@@ -59,7 +59,7 @@ class Planner(ABC):
         }
 
     @abstractmethod
-    def plan(self, obs: EnvState_t, info: dict, config: dict) -> Trajectory:
+    def plan(self, obs: EnvState, info: dict, config: dict) -> Trajectory:
         """Compute a trajectory through the gates. Subclasses must implement.
 
         Args:
@@ -71,7 +71,7 @@ class Planner(ABC):
             trajectory:         pos, vel, time in a trajectory class.
         """
 
-    def _gate(self, obs: EnvState_t) -> tuple[np.ndarray, np.ndarray]:
+    def _gate(self, obs: EnvState) -> tuple[np.ndarray, np.ndarray]:
         """Returns gate yaw and gate centre position from environment observation.
 
         Args:
@@ -83,14 +83,14 @@ class Planner(ABC):
                                 coordinates.
         """
         # Quaternion of gate frames
-        qTLT = obs.qTLT_array
-        pTLL_index = obs.pTLL_index
+        qTLT = obs.q_tlt_array
+        p_tll_index = obs.p_tll_index
 
         # Extracted rotation matrix/Euler angles from the quaternion
-        y_GBL_array = R.from_quat(qTLT[pTLL_index:]).as_euler("ZYX")[:, 0]
+        y_GBL_array = R.from_quat(qTLT[p_tll_index:]).as_euler("ZYX")[:, 0]
 
         # Centre position of gate frames
-        pGLL_array = obs.pTLL_array[pTLL_index:]
+        pGLL_array = obs.p_tll_array[p_tll_index:]
 
         return pGLL_array, y_GBL_array
 
@@ -228,13 +228,13 @@ class Planner(ABC):
         return True, centre, local, yaw, half_outer
 
     def _check_obsticle(
-        self, p_ref_LL: np.array, pOLL_array: np.ndarray
+        self, p_ref_LL: np.array, p_oll_array: np.ndarray
     ) -> tuple[bool, np.ndarray | None, float | None]:
         """Checks if a trajectory point is inside an obsticle.
 
         Args:
             p_ref_LL:       Trajectory point to be checked.
-            pOLL_array:     Centre point of obsticles.
+            p_oll_array:     Centre point of obsticles.
 
         Returns:
             is_inside_obsticle:     Boolian value if point is inside true if its outside false.
@@ -245,7 +245,7 @@ class Planner(ABC):
 
         # consider only x and y coordinates because it is a pillar
         p_ref_xy = p_ref_LL[0:2]
-        pOLL_xy = pOLL_array[:, 0:2]
+        pOLL_xy = p_oll_array[:, 0:2]
 
         # xy diff to all obsticles
         diff_xy = p_ref_xy - pOLL_xy
@@ -262,7 +262,7 @@ class Planner(ABC):
 
         # Return obsticle centre of violation and push for the detour point
         o = int(np.argmin(distances_xy))
-        return True, pOLL_array[o, :2], r_obstacle
+        return True, p_oll_array[o, :2], r_obstacle
 
     def get_pos_traj(self) -> np.ndarray:
         """Return the planned position samples (call plan() first)."""
@@ -274,25 +274,27 @@ class Planner(ABC):
         tq = min(t + lookahead_t, ts[-1])
         return np.array([np.interp(tq, ts, self.trajectory.positions[:, k]) for k in range(3)])
 
-    def _check_obsticle2(self, p_ref_LL: np.array, pOLL_array: np.ndarray) -> tuple[bool, np.array]:
+    def _check_obsticle2(
+        self, p_ref_LL: np.array, p_oll_array: np.ndarray
+    ) -> tuple[bool, np.array]:
         """Checks if a trajectory point is inside an obsticle.
 
         Args:
             p_ref_LL:       Trajectory point to be checked.
-            pOLL_array:     Obstacle center positions.
+            p_oll_array:     Obstacle center positions.
 
         Returns:
             is_inside_obsticle:     Boolian value if point is inside true if its outside
             obsticle:               Centre point of obsticle that is violated.
         """
-        if len(pOLL_array) == 0:
+        if len(p_oll_array) == 0:
             return False, None
         r_obsticle = R_OBSTACLE
 
-        distance = np.linalg.norm(p_ref_LL[0:2] - pOLL_array[:, 0:2], axis=1)
+        distance = np.linalg.norm(p_ref_LL[0:2] - p_oll_array[:, 0:2], axis=1)
 
         is_inside_obsticle = np.any(distance < r_obsticle)
-        obsticle = pOLL_array[np.argmin(distance)]
+        obsticle = p_oll_array[np.argmin(distance)]
 
         return is_inside_obsticle, obsticle
 

@@ -4,7 +4,7 @@ Samples a 3D grid of points around each gate, runs each through the
 collision check, and plots the points classified as "inside the frame"
 in red. Use this to verify the check's geometry matches your physical gate.
 
-Run:  python test_gate_check.py
+Run:  python gate_area_debug.py
 """
 
 import os
@@ -16,47 +16,47 @@ from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
-from lsy_drone_racing.control.Planner.planner import FRAME_OPENING, FRAME_THICK, FRAME_WIDTH
+from lsy_drone_racing.control.planner.planner import FRAME_OPENING, FRAME_THICK, FRAME_WIDTH
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from scipy.spatial.transform import Rotation as R
 
-from lsy_drone_racing.control.Planner.smart_planner import SplinePlanner
+from lsy_drone_racing.control.planner.smart_planner import SplinePlanner
 
 try:
-    from lsy_drone_racing.control.env_obs import EnvState_t
+    from lsy_drone_racing.control.env_obs import EnvState
 except Exception:
 
     @dataclass
-    class EnvState_t:
-        """Fallback observation state, used when the real EnvState_t is unavailable."""
+    class EnvState:
+        """Fallback observation state, used when the real EnvState is unavailable."""
 
-        pBLL: np.ndarray = field(default_factory=lambda: np.zeros(3))
-        vBLL: np.ndarray = field(default_factory=lambda: np.zeros(3))
-        wBLL: np.ndarray = field(default_factory=lambda: np.zeros(3))
-        qBLB: np.ndarray = field(default_factory=lambda: np.zeros(4))
-        pTLL_array: np.ndarray = field(default_factory=lambda: np.zeros((4, 3)))
-        pTLL_index: int = 0
-        qTLT_array: np.ndarray = field(default_factory=lambda: np.zeros((4, 4)))
-        pOLL_array: np.ndarray = field(default_factory=lambda: np.zeros((4, 3)))
-        hT: float = 0.3
-        lT: float = 0.3
-        wT: float = 0.02
+        p_bll: np.ndarray = field(default_factory=lambda: np.zeros(3))
+        v_bll: np.ndarray = field(default_factory=lambda: np.zeros(3))
+        w_bll: np.ndarray = field(default_factory=lambda: np.zeros(3))
+        q_blb: np.ndarray = field(default_factory=lambda: np.zeros(4))
+        p_tll_array: np.ndarray = field(default_factory=lambda: np.zeros((4, 3)))
+        p_tll_index: int = 0
+        q_tlt_array: np.ndarray = field(default_factory=lambda: np.zeros((4, 4)))
+        p_oll_array: np.ndarray = field(default_factory=lambda: np.zeros((4, 3)))
+        h_t: float = 0.3
+        l_t: float = 0.3
+        w_t: float = 0.02
 
 
 # ---------- helpers ----------------------------------------------------------
 
 
-def make_obs(start: np.ndarray, gates: list, obstacles: list) -> EnvState_t:
-    """Build a minimal EnvState_t from a start position, gate list, and obstacle list."""
-    obs = EnvState_t()
-    obs.pBLL = np.asarray(start, float)
-    obs.vBLL = np.zeros(3)
-    obs.wBLL = np.zeros(3)
-    obs.qBLB = np.array([0.0, 0.0, 0.0, 1.0])
-    obs.pTLL_array = np.array([g[0] for g in gates], float)
-    obs.qTLT_array = np.array([R.from_euler("Z", g[1]).as_quat() for g in gates])
-    obs.pTLL_index = 0
-    obs.pOLL_array = (
+def make_obs(start: np.ndarray, gates: list, obstacles: list) -> EnvState:
+    """Build a minimal EnvState from a start position, gate list, and obstacle list."""
+    obs = EnvState()
+    obs.p_bll = np.asarray(start, float)
+    obs.v_bll = np.zeros(3)
+    obs.w_bll = np.zeros(3)
+    obs.q_blb = np.array([0.0, 0.0, 0.0, 1.0])
+    obs.p_tll_array = np.array([g[0] for g in gates], float)
+    obs.q_tlt_array = np.array([R.from_euler("Z", g[1]).as_quat() for g in gates])
+    obs.p_tll_index = 0
+    obs.p_oll_array = (
         np.asarray(obstacles, float).reshape(-1, 3) if len(obstacles) else np.zeros((0, 3))
     )
     return obs
