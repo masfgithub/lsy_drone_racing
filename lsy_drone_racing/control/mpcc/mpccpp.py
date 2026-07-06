@@ -28,6 +28,7 @@ from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation as R
 
 from lsy_drone_racing.control.controller_interface import ControllerInterface
+from lsy_drone_racing.control.mpcc.mpccpp_reference import TunnelReferencePath, _gate_axes, _perp
 from lsy_drone_racing.control.mpcc.mpccpp_setup import (
     _BNM,
     _HIDX,
@@ -43,11 +44,6 @@ from lsy_drone_racing.control.mpcc.mpccpp_setup import (
     OBST_DIM,
     WEDGE_NP,
     num_params,
-)
-from lsy_drone_racing.control.mpcc.mpccpp_reference import (
-    TunnelReferencePath,
-    _gate_axes,
-    _perp,
 )
 from lsy_drone_racing.envs.environment_constraints.env_soft_constraints import (
     get_gate_objects,

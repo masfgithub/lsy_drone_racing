@@ -29,6 +29,7 @@ from __future__ import annotations
 import numpy as np
 from acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
 from casadi import DM, MX, cos, dot, norm_2, sin, vertcat
+
 from lsy_drone_racing.envs.environment_constraints.wedge_window import WedgeWindow
 
 # ── Parameter layout constants (mirror mpcc_test/mpccpp_model.py) ─────────────

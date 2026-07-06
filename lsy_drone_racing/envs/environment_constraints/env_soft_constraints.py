@@ -10,10 +10,10 @@ problem is always feasible.
 import numpy as np
 from casadi import MX, fmax, fmin, sqrt
 
-POST_RADIUS = 0.10 + 0.05
-
 from lsy_drone_racing.envs.environment_constraints.obstacle import CylinderObstacle
 from lsy_drone_racing.envs.environment_constraints.wedge_window import WedgeWindow
+
+POST_RADIUS = 0.10 + 0.05
 
 
 def get_obstacle_objects(
