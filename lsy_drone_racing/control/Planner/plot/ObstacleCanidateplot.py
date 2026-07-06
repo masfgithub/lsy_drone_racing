@@ -58,6 +58,32 @@ def _draw_frame_top(ax, c, yaw, half, color, lw, alpha):
     ax.plot([a[0], b[0]], [a[1], b[1]], color=color, lw=lw, alpha=alpha)
 
 
+def _frame_hit_points(planner, pts, pGLL_array, y_GBL_array):
+    """xy points of a sampled trajectory that collide with a gate frame.
+
+    Uses the planner's own `_check_gate3` -- the tight, physically-shaped frame
+    test that `_count_gate_hits`/`_pick_better` use to actually decide the
+    winner -- so the marked collisions are exactly the ones the search counts.
+    (NOT `_check_gate`, whose ~1 m-deep keep-out slab is for pushing waypoints
+    and flags points nowhere near the physical frame.)
+
+    Marks every sampled point that is inside a frame. Returns (N, 2) or None.
+    """
+    if pts is None or pGLL_array is None or y_GBL_array is None:
+        return None
+    pG = np.asarray(pGLL_array, float)
+    yG = np.asarray(y_GBL_array, float)
+    hits = []
+    for p in np.asarray(pts, float):
+        try:
+            inside = bool(planner._check_gate3(p, pG, yG)[0])
+        except Exception:
+            inside = False
+        if inside:
+            hits.append(p[:2])
+    return np.asarray(hits) if hits else None
+
+
 def _draw_branch(ax, sample, steps, reveal, *, final_color, final_lw, wp_face,
                  arrow_color, pmid_color, final_zorder, wp_zorder):
     """Draw one branch's iterations, revealing only the first `reveal` steps.
@@ -174,6 +200,8 @@ def plot_obstacle_candidates(
         Line2D([0], [0], marker="D", ls="", markerfacecolor="orange",
                markeredgecolor="k", markersize=9, color="w", label="detour wp"),
         Line2D([0], [0], color="darkorange", lw=2.0, label="push vector"),
+        Line2D([0], [0], marker="x", ls="", markeredgecolor="red",
+               markeredgewidth=2.5, markersize=10, color="w", label="gate-frame hit"),
     ]
 
     def render(ax, reveal_A, reveal_B):
@@ -192,6 +220,19 @@ def plot_obstacle_candidates(
         # each branch, revealed up to its own count (zorder keeps winner on top)
         _draw_branch(ax, sample, steps_A, reveal_A, **style_A)
         _draw_branch(ax, sample, steps_B, reveal_B, **style_B)
+
+        # mark gate-frame collisions on the latest revealed trajectory of each
+        # branch with a red x -- makes it obvious which side hits a frame (and
+        # therefore why the other side is picked).
+        for steps, reveal in ((steps_A, reveal_A), (steps_B, reveal_B)):
+            shown = steps[:reveal]
+            if not shown:
+                continue
+            hits = _frame_hit_points(planner, sample(shown[-1]["wps_after"]),
+                                     pGLL_array, y_GBL_array)
+            if hits is not None:
+                ax.scatter(hits[:, 0], hits[:, 1], s=90, marker="x", color="red",
+                           linewidths=2.5, zorder=13)
 
         # faded context gate frames for orientation
         if pGLL_array is not None and y_GBL_array is not None:
