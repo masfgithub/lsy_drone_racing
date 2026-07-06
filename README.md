@@ -79,4 +79,8 @@ For full details, refer to the [documentation](https://lsy-drone-racing.readthed
 
 ---
 
+## MPCC++ for Autonomous Drone Racing
+
+Follow this link for additonal information regarding the project and how to launch it:
+
 [docs/mpccpp.md](docs/project_info.md).
