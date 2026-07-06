@@ -503,7 +503,7 @@ class MPCCpp(ControllerInterface):
         info: dict,
         config: dict,
         t_total: int,
-        n_horizon: int = 40,
+        n_horizon: int = 20,
         t_horizon: float = 0.7,
         mu: float = 8.0,
         q_lag: float = 80.0,

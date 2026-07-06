@@ -28,8 +28,8 @@ if TYPE_CHECKING:
 
 if PLANNER_TYPE == "Smart":
     from lsy_drone_racing.control.planner.smart_planner import SplinePlanner
-elif PLANNER_TYPE == "Simple":
-    from lsy_drone_racing.control.planner.spline_planner_2 import SplinePlanner
+elif PLANNER_TYPE == "Lightweight":
+    from lsy_drone_racing.control.planner.lightweight_planner import SplinePlanner
 
 
 class DroneRacingPipeline(Controller):
@@ -57,8 +57,8 @@ class DroneRacingPipeline(Controller):
         trajectory = self._planner.plan(env_states, 0.0)
         self._controller = MPCCpp(env_states, trajectory, info, config, t_total)
         # Replan trigger bookkeeping.
-        self.nominal_gates_position = env_states.p_tll_array
-        self.nominal_obstacles_position = env_states.p_oll_array
+        self._nominal_gates_position = env_states.p_tll_array
+        self._nominal_obstacles_position = env_states.p_oll_array
         self._t_replan = 0.0
 
     def compute_control(
@@ -71,8 +71,8 @@ class DroneRacingPipeline(Controller):
         # The planner re-roots at the current drone position; the controller
         # then rebuilds its tube and resets theta to 0 (drone = new start).
         if self._force_replan or self._get_replan_reason(env_states):
-            self.nominal_gates_position = env_states.p_tll_array
-            self.nominal_obstacles_position = env_states.p_oll_array
+            self._nominal_gates_position = env_states.p_tll_array
+            self._nominal_obstacles_position = env_states.p_oll_array
             trajectory = self._planner.plan(env_states, self._tick / self._freq)
             self._t_replan = self._tick / self._freq
             self._controller.replan_reference(trajectory, env_states)
@@ -87,12 +87,12 @@ class DroneRacingPipeline(Controller):
     def _get_replan_reason(self, env_states: EnvState) -> bool:
         """True if the active gate or any obstacle moved more than 1 cm."""
         idx = int(getattr(env_states, "p_tll_index", 0))
-        if np.linalg.norm(self.nominal_gates_position[idx] - env_states.p_tll_array[idx]) > 0.01:
+        if np.linalg.norm(self._nominal_gates_position[idx] - env_states.p_tll_array[idx]) > 0.01:
             return True
-        n = min(len(self.nominal_obstacles_position), len(env_states.p_oll_array))
+        n = min(len(self._nominal_obstacles_position), len(env_states.p_oll_array))
         for i in range(n):
             if (
-                np.linalg.norm(self.nominal_obstacles_position[i] - env_states.p_oll_array[i])
+                np.linalg.norm(self._nominal_obstacles_position[i] - env_states.p_oll_array[i])
                 > 0.01
             ):
                 return True

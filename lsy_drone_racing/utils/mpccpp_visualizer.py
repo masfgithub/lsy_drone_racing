@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
     if PLANNER_TYPE == "Smart":
         from lsy_drone_racing.control.planner.smart_planner import SplinePlanner
-    elif PLANNER_TYPE == "Simple":
-        from lsy_drone_racing.control.planner.spline_planner_2 import SplinePlanner
+    elif PLANNER_TYPE == "Lightweight":
+        from lsy_drone_racing.control.planner.lightweight_planner import SplinePlanner
 
 
 def render_mpccpp(sim: Sim, planner: SplinePlanner, controller: MPCCpp):
@@ -35,35 +35,35 @@ def render_mpccpp(sim: Sim, planner: SplinePlanner, controller: MPCCpp):
         draw_points(sim, p.reshape(1, -1), rgba=(0.58, 0.0, 0.83, 0.5), size=0.01)
 
     # MPCC++ prediction tunnel (cyan edges + yellow corners)
-    # _draw_mpccpp_tunnel(sim, self._controller)
+    _draw_mpccpp_tunnel(sim, controller)
     # Reference trajectory (red dots)
     # ref_trajectory = self._controller.get_ref_traj()
     # for p in ref_trajectory:
     #    draw_points(sim, p.reshape(1, -1), rgba=(1.0, 0.0, 0.0, 0.5), size=0.01)
 
     # Gates
-    for gate in controller._gates:
-        _draw_wedge_gate(
-            sim,
-            position=gate.position,
-            quaternion=gate.quaternion,
-            total_length=gate.total_length,
-            total_height=gate.total_height,
-            hole_width=gate.hole_width,
-            hole_height=gate.hole_height,
-            thickness=gate.thickness,
-            rgba=np.array([0.0, 0.5, 1.0, 1.0]),
-        )
+    #for gate in controller._gates:
+    #    _draw_wedge_gate(
+    #        sim,
+    #        position=gate.position,
+    #        quaternion=gate.quaternion,
+    #        total_length=gate.total_length,
+    #        total_height=gate.total_height,
+    #        hole_width=gate.hole_width,
+    #        hole_height=gate.hole_height,
+    #        thickness=gate.thickness,
+    #        rgba=np.array([0.0, 0.5, 1.0, 1.0]),
+    #    )
 
-    # Obstacles
-    for obs in controller._obstacles:
-        _draw_cylinder_obstacle(
-            sim,
-            position=obs.position,
-            height=obs.total_height,
-            radius=obs.d_min,
-            rgba=np.array([1.0, 0.2, 0.2, 0.7]),
-        )
+    ## Obstacles
+    #for obs in controller._obstacles:
+    #    _draw_cylinder_obstacle(
+    #        sim,
+    #        position=obs.position,
+    #        height=obs.total_height,
+    #        radius=obs.d_min,
+    #        rgba=np.array([1.0, 0.2, 0.2, 0.7]),
+    #    )
 
 
 def _draw_wedge_gate(
