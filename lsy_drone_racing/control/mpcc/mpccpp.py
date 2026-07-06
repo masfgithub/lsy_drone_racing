@@ -44,12 +44,12 @@ from lsy_drone_racing.control.mpcc.mpccpp_setup import (
     WEDGE_NP,
     num_params,
 )
-from lsy_drone_racing.control.mpcc_test.mpccpp_reference import (
+from lsy_drone_racing.control.mpcc.mpccpp_reference import (
     TunnelReferencePath,
     _gate_axes,
     _perp,
 )
-from lsy_drone_racing.control.nmpc.env_soft_constraints import (
+from lsy_drone_racing.envs.environment_constraints.env_soft_constraints import (
     get_gate_objects,
     get_obstacle_objects,
 )

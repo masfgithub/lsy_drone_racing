@@ -12,12 +12,8 @@ from casadi import MX, fmax, fmin, sqrt
 
 POST_RADIUS = 0.10 + 0.05
 
-try:
-    from obstacle import CylinderObstacle
-    from wedge_window import WedgeWindow
-except ImportError:
-    from lsy_drone_racing.control.nmpc.obstacle import CylinderObstacle
-    from lsy_drone_racing.control.nmpc.wedge_window import WedgeWindow
+from lsy_drone_racing.envs.environment_constraints.obstacle import CylinderObstacle
+from lsy_drone_racing.envs.environment_constraints.wedge_window import WedgeWindow
 
 
 def get_obstacle_objects(

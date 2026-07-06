@@ -25,7 +25,7 @@ The base ReferencePath (spline, qc, projection) is reused unchanged.
 
 import numpy as np
 
-from lsy_drone_racing.control.mpcc_test.mpcc_reference import ReferencePath
+from lsy_drone_racing.control.mpcc.mpcc_reference import ReferencePath
 
 
 def _perp(t: np.ndarray, up: tuple[float, float, float] = (0.0, 0.0, 1.0)) -> np.ndarray:

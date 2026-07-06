@@ -10,7 +10,7 @@ from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation as R
 
 from lsy_drone_racing.control.controller_interface import ControllerInterface
-from lsy_drone_racing.control.nmpc.env_soft_constraints import (
+from lsy_drone_racing.envs.environment_constraints.env_soft_constraints import (
     get_gate_objects,
     get_obstacle_objects,
 )
