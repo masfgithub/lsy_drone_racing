@@ -1,41 +1,31 @@
-"""Interactive 2-candidate obstacle-detour debug plot with vector-PDF export.
+"""Interactive obstacle-detour SEARCH plot (top-down), one frame per push step.
 
-Companion to the gate-candidate plot, for the obstacle branch of `_explore`.
-The obstacle search forks two ways at each pillar (+push / -push); this draws
-both resulting trajectories in a single 3D view zoomed on the pillar, highlights
-the chosen side in colour and greys out the rejected one, keeps the winner's
-detour waypoints, and saves a vector PDF at whatever camera angle you leave the
-interactive window.
+Shows the recursive push search for ONE pillar in action, in a TOP-DOWN (x-y)
+view (the relevant projection: obstacles are vertical pillars, only horizontal
+distance matters). It writes a NUMBERED SEQUENCE of PDF frames that add ONE push
+at a time, in the order the search actually runs them, so you can step through
+the whole process:
 
-Workflow:
-    - a popup opens with both candidate paths around the obstacle;
-    - rotate to a good angle;
-    - press 's' to snapshot the current angle to a numbered PDF (optional);
-    - close the window -> the final angle is saved and the search continues.
+  * frame 00: the initial trajectory that runs straight through the obstacle
+    (grey dashed) -- no pushes yet;
+  * then ONE detour per frame, in execution order: branch A (+push) is built up
+    to completion first (its initial detour, then refinements until the pillar
+    clears), then branch B (-push) starting from the same first p_mid;
+  * every step is an arrow from its p_mid (star marker, on the trajectory) to the
+    new detour waypoint (diamond);
+  * the last frame is the full picture (also saved under the un-suffixed name).
 
-Note: needs an interactive backend for the popup (e.g. TkAgg/QtAgg). Set it
-before the first pyplot import:  import matplotlib; matplotlib.use("TkAgg").
+Intermediate and rejected trajectories / waypoints stay grey; the chosen final
+trajectory (green) and its waypoints (orange) are highlighted.
 
-Because `_explore` is recursive, this fires once per obstacle *decision node* --
-so a track with several pillars (or deep branching) produces several popups. To
-throttle, guard the call site, e.g. `if depth == 0:` for only the first/outermost
-decision, or cap `_COUNTER` below.
+You get ONE interactive popup per obstacle node showing the full picture: pan/
+zoom to frame it, press 's' to snapshot, close it -- every step frame is then
+rendered and saved at that same view.
 
-Usage (in SplinePlanner._explore, replacing the final return):
-
-    from lsy_drone_racing.control.Planner.plot.ObstacleCanidateplot import (
-        plot_obstacle_candidates,
-    )
-    result_wps, result_clear = self._pick_better(
-        wps_A, clear_A, wps_B, clear_B, t_elapsed, depth
-    )
-    winner = "A" if result_wps is wps_A else "B"
-    plot_obstacle_candidates(
-        self, wps_A, wps_B, winner, entry_obst_c, t_elapsed, depth,
-        pOLL_array, getattr(self, "_pGLL_array", None),
-        getattr(self, "_y_GBL_array", None),
-    )
-    return result_wps, result_clear
+Note: needs an interactive backend for the popup (e.g. TkAgg/QtAgg); set it
+before the first pyplot import. Because `_explore` is recursive this fires once
+per obstacle decision node -- guard the call site (e.g. `if depth == 0:`) if that
+is too many frames.
 """
 
 from __future__ import annotations
@@ -44,37 +34,66 @@ import os
 
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers 3d projection)
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
 try:
     from lsy_drone_racing.control.Planner.planner import (
-        FRAME_WIDTH, R_OBSTACLE, CLEARANCE,
+        FRAME_WIDTH, FRAME_OPENING, R_OBSTACLE, CLEARANCE,
     )
 except Exception:  # pragma: no cover - fallback for standalone use
-    FRAME_WIDTH, R_OBSTACLE, CLEARANCE = 0.72, 0.15, 0.10
+    FRAME_WIDTH, FRAME_OPENING, R_OBSTACLE, CLEARANCE = 0.72, 0.10, 0.15, 0.10
 
 _WIN_COLOR = "tab:green"
-_LOSE_COLOR = "0.6"     # grey
-_COUNTER = {"n": 0}     # makes filenames unique across recursion nodes
+_LOSE_COLOR = "0.55"      # grey (rejected final)
+_INTER_COLOR = "0.7"      # lighter grey (intermediate iterations)
+_COUNTER = {"n": 0}       # keeps filenames unique across recursion nodes
 
 
-def _draw_cylinder(ax, c, radius, z0, z1, color, alpha):
-    """Vertical pillar as a translucent surface strip."""
-    th = np.linspace(0, 2 * np.pi, 40)
-    T = np.vstack([th, th])
-    Z = np.vstack([np.full_like(th, z0), np.full_like(th, z1)])
-    X = c[0] + radius * np.cos(T)
-    Y = c[1] + radius * np.sin(T)
-    ax.plot_surface(X, Y, Z, color=color, alpha=alpha, linewidth=0, shade=False)
+def _draw_frame_top(ax, c, yaw, half, color, lw, alpha):
+    """Gate frame as a line across the width in the top-down (x-y) view."""
+    w = np.array([-np.sin(yaw), np.cos(yaw)])
+    a = np.asarray(c, float)[:2] - half * w
+    b = np.asarray(c, float)[:2] + half * w
+    ax.plot([a[0], b[0]], [a[1], b[1]], color=color, lw=lw, alpha=alpha)
 
 
-def _draw_frame_3d(ax, c, yaw, half, color, lw=2.0, alpha=1.0):
-    """Square gate frame in 3D (context only)."""
-    w = np.array([-np.sin(yaw), np.cos(yaw), 0.0])
-    zz = np.array([0.0, 0.0, 1.0])
-    corners = [(-1, -1), (1, -1), (1, 1), (-1, 1), (-1, -1)]
-    pts = np.array([np.asarray(c, float) + s * half * w + t * half * zz for s, t in corners])
-    ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=color, lw=lw, alpha=alpha)
+def _draw_branch(ax, sample, steps, reveal, *, final_color, final_lw, wp_face,
+                 arrow_color, pmid_color, final_zorder, wp_zorder):
+    """Draw one branch's iterations, revealing only the first `reveal` steps.
+
+    The last revealed trajectory is `final_color`; earlier ones are faint grey.
+    Each revealed step contributes a p_mid star, an arrow p_mid -> new waypoint,
+    and the new detour waypoint (diamond).
+    """
+    shown = steps[:reveal]
+    if not shown:
+        return
+    n = len(shown)
+
+    # trajectory after each revealed iteration: intermediates faint, latest bold
+    for k, st in enumerate(shown):
+        pts = sample(st["wps_after"])
+        if pts is None:
+            continue
+        if k == n - 1:
+            ax.plot(pts[:, 0], pts[:, 1], "-", color=final_color, lw=final_lw,
+                    zorder=final_zorder)
+        else:
+            ax.plot(pts[:, 0], pts[:, 1], "-", color=_INTER_COLOR, lw=1.2,
+                    alpha=0.55, zorder=4)
+
+    # push vectors: arrow from each revealed p_mid to the waypoint it created
+    for st in shown:
+        p_mid = np.asarray(st["p_mid"], float)
+        new_wp = np.asarray(st["new_wp"], float)
+        ax.annotate("", xy=(new_wp[0], new_wp[1]), xytext=(p_mid[0], p_mid[1]),
+                    arrowprops=dict(arrowstyle="-|>", color=arrow_color, lw=2.0),
+                    zorder=11)
+        ax.scatter([new_wp[0]], [new_wp[1]], s=60, marker="D",
+                   facecolor=wp_face, edgecolor="k", zorder=wp_zorder)
+        ax.scatter([p_mid[0]], [p_mid[1]], s=120, marker="*",
+                   facecolor=pmid_color, edgecolor="k", zorder=12)
 
 
 def plot_obstacle_candidates(
@@ -85,32 +104,32 @@ def plot_obstacle_candidates(
     obst_c,
     t_elapsed: float,
     depth: int,
-    pOLL_array: np.ndarray,
+    pOLL_array: np.ndarray = None,          # kept for signature compatibility; not drawn
     pGLL_array: np.ndarray | None = None,
     y_GBL_array: np.ndarray | None = None,
     save_dir: str = "obstacle_candidate_debug",
-    pad: float = 1.0,
+    pad: float = 0.6,                        # half-size [m] of the top-down view box around the pillar
     interactive: bool = True,
+    history: dict | None = None,
 ) -> str:
-    """Plot both obstacle-detour candidates for one pillar and save a PDF.
+    """Top-down step-by-step plot of the push search for one pillar; save PDFs.
 
     Args:
-        planner:      SplinePlanner (used for `_create_spline`).
-        wps_A:        Waypoints of the +push branch.
-        wps_B:        Waypoints of the -push branch.
-        winner:       "A" or "B" -- which branch was chosen by `_pick_better`.
-        obst_c:       2D (xy) center of the target obstacle.
+        planner:      SplinePlanner (uses `_create_spline`).
+        wps_A, wps_B: Final waypoints of the +push / -push branches (context).
+        winner:       "A" or "B" -- which branch `_pick_better` chose.
+        obst_c:       2D (xy) center of the obstacle being resolved.
         t_elapsed:    Current race time (for spline timing).
-        depth:        Recursion depth (used in the title/filename).
-        pOLL_array:   Obstacle centers (target + context pillars).
-        pGLL_array:   Optional gate centers for faded context.
-        y_GBL_array:  Optional gate yaws.
-        save_dir:     Output directory for the PDF.
-        pad:          Half-size [m] of the local view box around the pillar.
-        interactive:  If True, open a popup and save the angle you close it at.
+        depth:        Recursion depth (filename).
+        pGLL_array:   Gate centers (for faded context frames).
+        y_GBL_array:  Gate yaws.
+        history:      {"initial_wps", "A": steps, "B": steps, "winner"} where each
+                      steps entry is {"p_mid", "new_wp", "wps_after"}.
+        interactive:  If True, open one popup on the full picture and save every
+                      step frame at the view you close it at.
 
     Returns:
-        Path to the saved PDF.
+        Path to the saved full-picture PDF.
     """
     os.makedirs(save_dir, exist_ok=True)
     obst_c = np.asarray(obst_c, float)[:2]
@@ -120,99 +139,128 @@ def plot_obstacle_candidates(
             wps = np.asarray(wps, float)
             sp, t_sample = planner._create_spline(wps, t_elapsed)
             td = np.linspace(0, t_sample[-1], len(t_sample) * 4)
-            return sp(td), wps
+            return sp(td)
         except Exception:
-            return None, None
-
-    ptsA, wpA = sample(wps_A)
-    ptsB, wpB = sample(wps_B)
+            return None
 
     win_is_A = winner == "A"
-    win_pts, win_wps = (ptsA, wpA) if win_is_A else (ptsB, wpB)
-    lose_pts = ptsB if win_is_A else ptsA
     win_label = "A (+push)" if win_is_A else "B (-push)"
     lose_label = "B (-push)" if win_is_A else "A (+push)"
 
-    # Zoom z: the winner trajectory's height where it passes the pillar.
-    z_center = 1.0
-    if win_pts is not None:
-        d = np.linalg.norm(win_pts[:, :2] - obst_c, axis=1)
-        z_center = float(win_pts[int(np.argmin(d)), 2])
-    z0, z1 = z_center - pad, z_center + pad
+    history = history or {}
+    steps_A = history.get("A") or []
+    steps_B = history.get("B") or []
+    init_wps = history.get("initial_wps")
+    len_A, len_B = len(steps_A), len(steps_B)
 
-    def near(p) -> bool:
-        return np.linalg.norm(np.asarray(p, float)[:2] - obst_c) < pad + 0.6
+    # winner branch drawn green/orange, loser grey
+    win_style = dict(final_color=_WIN_COLOR, final_lw=2.6, wp_face="orange",
+                     arrow_color="darkorange", pmid_color="gold",
+                     final_zorder=6, wp_zorder=10)
+    lose_style = dict(final_color=_LOSE_COLOR, final_lw=1.9, wp_face=_LOSE_COLOR,
+                      arrow_color="0.4", pmid_color="0.55",
+                      final_zorder=5, wp_zorder=9)
+    style_A = win_style if win_is_A else lose_style
+    style_B = lose_style if win_is_A else win_style
 
-    fig = plt.figure(figsize=(8, 7))
-    ax = fig.add_subplot(111, projection="3d")
+    handles = [
+        Patch(facecolor="firebrick", alpha=0.55, label="obstacle keep-out"),
+        Line2D([0], [0], color="0.35", ls="--", lw=1.6, label="initial (hits obstacle)"),
+        Line2D([0], [0], color=_WIN_COLOR, lw=2.6, label=f"chosen: {win_label}"),
+        Line2D([0], [0], color=_LOSE_COLOR, lw=1.9, label=f"rejected: {lose_label}"),
+        Line2D([0], [0], color=_INTER_COLOR, lw=1.2, label="intermediate"),
+        Line2D([0], [0], marker="*", ls="", markerfacecolor="gold",
+               markeredgecolor="k", markersize=15, color="w", label="p_mid"),
+        Line2D([0], [0], marker="D", ls="", markerfacecolor="orange",
+               markeredgecolor="k", markersize=9, color="w", label="detour wp"),
+        Line2D([0], [0], color="darkorange", lw=2.0, label="push vector"),
+    ]
 
-    # rejected side (grey) first, chosen side (green) on top
-    if lose_pts is not None:
-        ax.plot(lose_pts[:, 0], lose_pts[:, 1], lose_pts[:, 2], "-",
-                color=_LOSE_COLOR, lw=1.6, zorder=3, label=f"rejected: {lose_label}")
-    if win_pts is not None:
-        ax.plot(win_pts[:, 0], win_pts[:, 1], win_pts[:, 2], "-",
-                color=_WIN_COLOR, lw=2.6, zorder=6, label=f"chosen: {win_label}")
+    def render(ax, reveal_A, reveal_B):
+        """Draw the scene revealing reveal_A pushes of branch A and reveal_B of B."""
+        # obstacle keep-out (behind everything)
+        ax.add_patch(plt.Circle((obst_c[0], obst_c[1]), R_OBSTACLE,
+                                color="firebrick", alpha=0.55, zorder=2))
 
-    # winner detour waypoints near the pillar
-    if win_wps is not None:
-        mask = np.array([near(w) for w in win_wps])
-        wpn = win_wps[mask] if mask.any() else win_wps
-        ax.scatter(wpn[:, 0], wpn[:, 1], wpn[:, 2], c="orange", marker="D", s=55,
-                   edgecolor="k", depthshade=False, label="chosen waypoints")
+        # initial trajectory (runs through the obstacle)
+        if init_wps is not None:
+            pts0 = sample(init_wps)
+            if pts0 is not None:
+                ax.plot(pts0[:, 0], pts0[:, 1], "--", color="0.35", lw=1.6,
+                        alpha=0.85, zorder=3)
 
-    # target pillar: solid keep-out + clearance shell
-    _draw_cylinder(ax, obst_c, R_OBSTACLE, z0, z1, "firebrick", 0.35)
-    _draw_cylinder(ax, obst_c, R_OBSTACLE + CLEARANCE, z0, z1, "orange", 0.12)
+        # each branch, revealed up to its own count (zorder keeps winner on top)
+        _draw_branch(ax, sample, steps_A, reveal_A, **style_A)
+        _draw_branch(ax, sample, steps_B, reveal_B, **style_B)
 
-    # nearby context pillars (faded)
-    for o in np.asarray(pOLL_array, float).reshape(-1, 3):
-        if np.allclose(o[:2], obst_c) or not near(o):
-            continue
-        _draw_cylinder(ax, o[:2], R_OBSTACLE, z0, z1, "firebrick", 0.15)
+        # faded context gate frames for orientation
+        if pGLL_array is not None and y_GBL_array is not None:
+            for gc, gy in zip(np.asarray(pGLL_array, float), np.asarray(y_GBL_array, float)):
+                _draw_frame_top(ax, gc, gy, FRAME_WIDTH / 2, "tab:blue", 2.0, 0.35)
+                _draw_frame_top(ax, gc, gy, FRAME_OPENING / 2, "tab:cyan", 3.0, 0.45)
 
-    # nearby context gates (faded)
-    if pGLL_array is not None and y_GBL_array is not None:
-        for gc, gy in zip(np.asarray(pGLL_array, float), np.asarray(y_GBL_array, float)):
-            if not near(gc):
-                continue
-            _draw_frame_3d(ax, gc, gy, FRAME_WIDTH / 2, "tab:blue", lw=1.2, alpha=0.5)
+        ax.set_xlim(obst_c[0] - pad * 1.25, obst_c[0] + pad * 1.25)
+        ax.set_ylim(obst_c[1] - pad, obst_c[1] + pad)
+        ax.set_aspect("equal")
+        ax.grid(alpha=0.3)
+        ax.set_xlabel("x [m]", fontsize=20)
+        ax.set_ylabel("y [m]", fontsize=20)
+        ax.tick_params(axis="both", labelsize=17)
+        ax.locator_params(axis="both", nbins=4)   # <= 5 ticks per axis
+        ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.16),
+                  ncol=3, fontsize=14, frameon=False, columnspacing=1.2)
 
-    ax.set_xlim(obst_c[0] - pad, obst_c[0] + pad)
-    ax.set_ylim(obst_c[1] - pad, obst_c[1] + pad)
-    ax.set_zlim(z0, z1)
-    ax.set_box_aspect((1, 1, 1))
-    ax.set_xlabel("x [m]"); ax.set_ylabel("y [m]"); ax.set_zlabel("z [m]")
-    ax.set_title(f"obstacle detour (depth {depth}) — chosen {win_label}")
-    ax.legend(loc="upper left", fontsize=8)
-    fig.suptitle(
-        f"Obstacle at ({obst_c[0]:.2f}, {obst_c[1]:.2f}) — "
-        f"green = chosen, grey = rejected", fontsize=11)
-    fig.tight_layout()
+    def finish(fig, ax, view):
+        if view is not None:
+            ax.set_xlim(view[0])
+            ax.set_ylim(view[1])
+        fig.tight_layout()
+        fig.subplots_adjust(bottom=0.28)   # room for the legend band below the axes
 
     _COUNTER["n"] += 1
-    pdf_path = os.path.join(save_dir, f"obstacle_candidates_{_COUNTER['n']:03d}_d{depth}.pdf")
+    base = f"obstacle_candidates_{_COUNTER['n']:03d}_d{depth}"
 
+    # One interactive popup on the FULL picture; capture the view for the frames.
+    view = None
     if interactive:
+        fig, ax = plt.subplots(figsize=(9, 7))
+        render(ax, len_A, len_B)
+        finish(fig, ax, None)
         snap = {"k": 0}
 
         def _on_key(event):
             if event.key == "s":
-                p = os.path.join(save_dir, f"obstacle_candidates_{_COUNTER['n']:03d}_d{depth}_snap{snap['k']}.pdf")
-                fig.savefig(p)
+                p = os.path.join(save_dir, f"{base}_snap{snap['k']}.pdf")
+                fig.savefig(p, bbox_inches="tight")
                 snap["k"] += 1
                 print(f"[obstacle candidates] snapshot -> {p}")
 
         cid = fig.canvas.mpl_connect("key_press_event", _on_key)
-        print("[obstacle candidates] rotate the 3D view; press 's' to snapshot an angle; "
-              "close the window to save the final angle and continue.")
+        print("[obstacle candidates] pan/zoom to frame the full picture; press 's' "
+              "to snapshot; close the window to render every step frame at that view.")
         plt.show(block=True)
+        view = (ax.get_xlim(), ax.get_ylim())
         try:
             fig.canvas.mpl_disconnect(cid)
         except Exception:
             pass
+        plt.close(fig)
 
-    fig.savefig(pdf_path)
-    print(f"[obstacle candidates] saved {pdf_path}")
-    plt.close(fig)
-    return pdf_path
+    # Render + save one frame per push step, in execution order: A first, then B.
+    full_path = os.path.join(save_dir, f"{base}.pdf")
+    n_frames = len_A + len_B + 1
+    for f in range(n_frames):
+        reveal_A = min(f, len_A)
+        reveal_B = min(max(0, f - len_A), len_B)
+        fig, ax = plt.subplots(figsize=(9, 7))
+        render(ax, reveal_A, reveal_B)
+        finish(fig, ax, view)
+        fig.savefig(os.path.join(save_dir, f"{base}_iter{f:02d}.pdf"),
+                    bbox_inches="tight")
+        if f == n_frames - 1:                  # last frame == full picture
+            fig.savefig(full_path, bbox_inches="tight")
+        plt.close(fig)
+
+    print(f"[obstacle candidates] saved {n_frames} step frames -> "
+          f"{base}_iter00..{n_frames - 1:02d}.pdf (+ {os.path.basename(full_path)})")
+    return full_path

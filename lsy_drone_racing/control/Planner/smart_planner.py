@@ -320,7 +320,7 @@ class SplinePlanner(Planner):
 
         # Branch A: explore the +push side. Iteratively resolve THIS obstacle
         # inside the branch, then recurse for the NEXT obstacle.
-        wps_A, ok_A = self._explore_branch(
+        wps_A, ok_A, steps_A = self._explore_branch(
             wps, entry_i, exit_i, entry_obst_c, pts, cum,
             initial_push_sign=+1, t_elapsed=t_elapsed,
             pOLL_array=pOLL_array, max_iter=10,
@@ -334,7 +334,7 @@ class SplinePlanner(Planner):
             clear_A = False
 
         # Branch B: same with -push side
-        wps_B, ok_B = self._explore_branch(
+        wps_B, ok_B, steps_B = self._explore_branch(
             wps, entry_i, exit_i, entry_obst_c, pts, cum,
             initial_push_sign=-1, t_elapsed=t_elapsed,
             pOLL_array=pOLL_array, max_iter=10,
@@ -351,11 +351,18 @@ class SplinePlanner(Planner):
             wps_A, clear_A, wps_B, clear_B, t_elapsed, depth
         )
         winner = "A" if result_wps is wps_A else "B"
+        history = {
+            "initial_wps": np.asarray(wps).copy(),   # trajectory that runs through the obstacle
+            "A": steps_A,
+            "B": steps_B,
+            "winner": winner,
+        }
         plot_obstacle_candidates(
             self, wps_A, wps_B, winner, entry_obst_c, t_elapsed, depth,
             pOLL_array,
             getattr(self, "_pGLL_array", None),
             getattr(self, "_y_GBL_array", None),
+            history=history,
         )
         return result_wps, result_clear
 
@@ -458,7 +465,12 @@ class SplinePlanner(Planner):
         Returns:
             wps:        Waypoints after this obstacle is resolved.
             ok:         True if the target obstacle was successfully cleared.
+            steps:      Per-iteration push records (p_mid, new_wp, wps_after) for
+                        plotting the search.
         """
+        # Record every push (p_mid -> new waypoint) so the search can be plotted.
+        steps = []
+
         # 1. Initial detour
         p_in, p_out = pts[entry_i], pts[exit_i]
         push_vector = self._compute_initial_push_vector(p_in, p_out, entry_obst_c)
@@ -466,6 +478,9 @@ class SplinePlanner(Planner):
         initial_wp = self._compute_detour_waypoint(p_in, p_out, entry_obst_c, push_vector)
         s_detour = 0.5 * (cum[entry_i] + cum[exit_i])
         wps = self._insert_detour(wps_initial, initial_wp, s_detour, t_elapsed)
+        steps.append({"p_mid": ((p_in + p_out) / 2).copy(),
+                      "new_wp": initial_wp.copy(),
+                      "wps_after": wps.copy()})
 
         # 2. Iteratively resolve THIS obstacle only
         for _ in range(max_iter):
@@ -481,7 +496,7 @@ class SplinePlanner(Planner):
             )
             if target_violation is None:
                 # Target obstacle is clear — done
-                return wps, True
+                return wps, True, steps
 
             e_i, x_i = target_violation
             p_in_b, p_out_b = branch_pts[e_i], branch_pts[x_i]
@@ -489,9 +504,12 @@ class SplinePlanner(Planner):
             wp = self._compute_detour_waypoint(p_in_b, p_out_b, target_obst_c, pv)
             s_new = 0.5 * (branch_cum[e_i] + branch_cum[x_i])
             wps = self._insert_detour(wps, wp, s_new, t_elapsed)
+            steps.append({"p_mid": ((p_in_b + p_out_b) / 2).copy(),
+                          "new_wp": wp.copy(),
+                          "wps_after": wps.copy()})
 
         # Failed to clear after max_iter
-        return wps, False
+        return wps, False, steps
     
     def _find_specific_obstacle_violation(self, pts, target_obst_c, r_obstacle=None):
         """Find the first violation of a SPECIFIC obstacle in pts.

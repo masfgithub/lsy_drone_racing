@@ -1,22 +1,24 @@
-"""Interactive 3-candidate gate-detour debug plot with vector-PDF export.
+"""Interactive 3-candidate gate-detour debug plot (top-down) with vector-PDF export.
 
-Replaces the per-branch `_plot_gate_branch` calls: instead of three separate
-figures, this draws all three candidate trajectories (Left / Right / Top) for a
-single gate violation in one figure, highlights the chosen one in colour and
-greys out the other two, keeps the winner's waypoints and a local view of the
-environment around the gate, and saves a vector PDF at whatever camera angle you
-leave the interactive window.
+Companion to the obstacle-candidate plot, for the gate branch of the planner.
+For a single gate violation the search forks three ways (Left / Right / Top);
+this shows, in a TOP-DOWN (x-y) view:
 
-Workflow:
-    - a popup window opens with all three candidates;
-    - rotate the 3D panel to a good angle;
-    - press 's' to snapshot the current angle to a numbered PDF (optional);
-    - close the window -> the final angle is saved to the main PDF and the
-      planner continues to the next gate.
+  * all three candidate trajectories -- chosen in colour, rejected in grey;
+  * the default gate waypoints (grey circles, shared by every branch) and each
+    branch's own detour waypoints (diamonds: chosen yellow, rejected grey);
+  * obstacle-collision hits along each branch (red x);
+  * the target gate frame (outer + opening) and nearby context gates;
+  * nearby obstacle keep-out shells.
 
-Note: for the popup you need an interactive backend (e.g. TkAgg/QtAgg). If you
-import this after something already selected 'Agg', set the backend first:
-    import matplotlib; matplotlib.use("TkAgg")
+Saves a vector PDF at whatever pan/zoom you leave the interactive window.
+
+Workflow: a popup opens; pan/zoom to frame it; press 's' to snapshot the current
+view to a numbered PDF (optional); close the window -> the current view is saved
+and the planner continues to the next gate.
+
+Note: needs an interactive backend for the popup (e.g. TkAgg/QtAgg); set it
+before the first pyplot import.
 
 Usage (from SplinePlanner._avoid_gates_tree, right after the winner is picked):
 
@@ -38,7 +40,6 @@ import os
 
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers 3d projection)
 
 # Frame / obstacle sizes -- taken from the planner, with a fallback so the module
 # also runs on its own for testing.
@@ -51,24 +52,59 @@ except Exception:  # pragma: no cover - fallback for standalone use
 
 _ORDER = ("Left", "Right", "Top")
 _WIN_COLOR = "tab:green"
-_LOSE_COLOR = "0.6"   # grey
-
-
-def _draw_frame_3d(ax, c, yaw, half, color, lw=2.0, alpha=1.0):
-    """Square gate frame in 3D (side dir = gate width, up = world z)."""
-    w = np.array([-np.sin(yaw), np.cos(yaw), 0.0])
-    zz = np.array([0.0, 0.0, 1.0])
-    corners = [(-1, -1), (1, -1), (1, 1), (-1, 1), (-1, -1)]
-    pts = np.array([np.asarray(c, float) + s * half * w + t * half * zz for s, t in corners])
-    ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=color, lw=lw, alpha=alpha)
+_LOSE_COLOR = "0.55"   # grey
 
 
 def _draw_frame_top(ax, c, yaw, half, color, lw=2.0, alpha=1.0):
-    """Gate frame as a line across the width in the top-down (xy) view."""
+    """Gate frame as a line across the width in the top-down (x-y) view."""
     w = np.array([-np.sin(yaw), np.cos(yaw)])
     a = np.asarray(c, float)[:2] - half * w
     b = np.asarray(c, float)[:2] + half * w
     ax.plot([a[0], b[0]], [a[1], b[1]], color=color, lw=lw, alpha=alpha)
+
+
+def _shared_and_own(branch_wps, tol=1e-6):
+    """Split branch waypoints into shared-by-all (default) vs. branch-specific.
+
+    Args:
+        branch_wps: {name: wps_array_or_None} for each candidate branch.
+
+    Returns:
+        (shared_xyz, {name: own_xyz}) -- 'shared' points appear in every branch
+        (the default gate-centre waypoints); each 'own' set is that branch's
+        newly inserted detour waypoints.
+    """
+    names = [n for n, W in branch_wps.items() if W is not None and len(W)]
+    if not names:
+        return np.empty((0, 3)), {}
+
+    def has(W, p):
+        W = np.asarray(W, float)
+        return len(W) > 0 and np.min(np.linalg.norm(W - p, axis=1)) < tol
+
+    ref = np.asarray(branch_wps[names[0]], float)
+    shared = np.array([p for p in ref if all(has(branch_wps[n], p) for n in names)])
+    if not len(shared):
+        shared = np.empty((0, 3))
+
+    own = {}
+    for n in names:
+        W = np.asarray(branch_wps[n], float)
+        pts = [p for p in W if not has(shared, p)]
+        own[n] = np.array(pts) if pts else np.empty((0, 3))
+    return shared, own
+
+
+def _obstacle_violations(pts, pOLL_array):
+    """xy of dense samples that lie inside an obstacle (a branch hitting one)."""
+    if pts is None or pOLL_array is None:
+        return np.empty((0, 2))
+    obs = np.asarray(pOLL_array, float).reshape(-1, 3)
+    if not len(obs):
+        return np.empty((0, 2))
+    hits = [p[:2] for p in pts
+            if np.any(np.linalg.norm(obs[:, :2] - p[:2], axis=1) < R_OBSTACLE)]
+    return np.array(hits) if hits else np.empty((0, 2))
 
 
 def plot_gate_candidates(
@@ -83,10 +119,10 @@ def plot_gate_candidates(
     t_elapsed: float,
     outer_iter: int,
     save_dir: str = "gate_candidate_debug",
-    pad: float = 1.0,
+    pad: float = 0.9,     # half-size [m] of the top-down view box around the gate
     interactive: bool = True,
 ) -> str:
-    """Plot the three gate-detour candidates for one violation and save a PDF.
+    """Top-down plot of the three gate-detour candidates for one violation; save a PDF.
 
     Args:
         planner:      The SplinePlanner (used for `_create_spline`).
@@ -102,7 +138,7 @@ def plot_gate_candidates(
         outer_iter:   Gate-tree iteration index (used in the filename).
         save_dir:     Output directory for the PDF.
         pad:          Half-size [m] of the local view box around the gate.
-        interactive:  If True, open a popup, save the angle you close it at.
+        interactive:  If True, open a popup, save the view you close it at.
 
     Returns:
         Path to the saved PDF.
@@ -124,17 +160,17 @@ def plot_gate_candidates(
         except Exception:
             trajs[name] = None
 
-    winner_wps = None
-    if trajs.get(winner_name) is not None:
-        winner_wps = trajs[winner_name][1]
+    # split waypoints into shared-by-all (default gate-centre) vs. each branch's
+    # own newly inserted detour waypoints
+    shared, own = _shared_and_own(
+        {n: (trajs[n][1] if trajs.get(n) is not None else None) for n in _ORDER}
+    )
 
     def near(p) -> bool:
         return np.linalg.norm(np.asarray(p, float)[:2] - gate_c[:2]) < pad + 0.6
 
     # --- figure --------------------------------------------------------------
-    fig = plt.figure(figsize=(15, 7))
-    ax3d = fig.add_subplot(121, projection="3d")
-    axtop = fig.add_subplot(122)
+    fig, ax = plt.subplots(figsize=(9, 7))
 
     # trajectories: losers (grey) first, winner (colour) on top
     for name in _ORDER:
@@ -142,73 +178,87 @@ def plot_gate_candidates(
             continue
         pts = trajs[name][0]
         win = name == winner_name
-        col, lw, z = (_WIN_COLOR, 2.6, 6) if win else (_LOSE_COLOR, 1.4, 3)
-        lbl = f"{name} (chosen)" if win else name
-        ax3d.plot(pts[:, 0], pts[:, 1], pts[:, 2], "-", color=col, lw=lw, zorder=z, label=lbl)
-        axtop.plot(pts[:, 0], pts[:, 1], "-", color=col, lw=lw, zorder=z, label=lbl)
+        col, lw, z = (_WIN_COLOR, 2.4, 5) if win else (_LOSE_COLOR, 1.7, 3)
+        lbl = f"{name} (chosen)" if win else f"{name} (rejected)"
+        ax.plot(pts[:, 0], pts[:, 1], "-", color=col, lw=lw, zorder=z, label=lbl)
 
-    # winner waypoints (numbered), only the ones near the gate
-    if winner_wps is not None:
-        mask = np.array([near(w) for w in winner_wps])
-        wp_near = winner_wps[mask] if mask.any() else winner_wps
-        ax3d.scatter(wp_near[:, 0], wp_near[:, 1], wp_near[:, 2], c="orange", marker="D",
-                     s=55, edgecolor="k", depthshade=False,
-                     label=f"chosen waypoints ({len(winner_wps)})")
-        axtop.scatter(wp_near[:, 0], wp_near[:, 1], c="orange", marker="D", s=60,
-                      edgecolor="k", zorder=7)
-        for i, w in enumerate(winner_wps):
-            if near(w):
-                ax3d.text(w[0], w[1], w[2] + 0.03, str(i), fontsize=8)
-                axtop.annotate(str(i), (w[0], w[1]), textcoords="offset points",
-                               xytext=(5, 5), fontsize=8)
+    # default gate-centre waypoints, shared by all branches (grey circles)
+    if len(shared):
+        sh = shared[np.array([near(w) for w in shared])]
+        if len(sh):
+            ax.scatter(sh[:, 0], sh[:, 1], s=45, c="0.75", marker="o",
+                       zorder=4, label="gate waypoints")
+
+    # rejected branches' own detour waypoints (grey diamonds)
+    lose_wp_labeled = False
+    for name in _ORDER:
+        if name == winner_name or name not in own or not len(own[name]):
+            continue
+        W = own[name][np.array([near(w) for w in own[name]])]
+        if not len(W):
+            continue
+        ax.scatter(W[:, 0], W[:, 1], s=55, marker="D",
+                   facecolor=_LOSE_COLOR, edgecolor="k", zorder=9,
+                   label=None if lose_wp_labeled else "rejected detour wp")
+        lose_wp_labeled = True
+
+    # chosen branch's own detour waypoints (yellow/orange diamonds)
+    if winner_name in own and len(own[winner_name]):
+        W = own[winner_name][np.array([near(w) for w in own[winner_name]])]
+        if len(W):
+            ax.scatter(W[:, 0], W[:, 1], s=60, marker="D",
+                       facecolor="orange", edgecolor="k", zorder=10,
+                       label="chosen detour wp")
+
+    # obstacle-collision violations along each branch (red x)
+    viol_labeled = False
+    for name in _ORDER:
+        if trajs.get(name) is None:
+            continue
+        viol = _obstacle_violations(trajs[name][0], pOLL_array)
+        if len(viol):
+            ax.scatter(viol[:, 0], viol[:, 1], s=42, c="red", marker="x",
+                       linewidths=1.6, zorder=8,
+                       label=None if viol_labeled else "obstacle violation")
+            viol_labeled = True
 
     # target gate frame: outer + opening
-    _draw_frame_3d(ax3d, gate_c, gate_yaw, FRAME_WIDTH / 2, "tab:blue", lw=2.5)
-    _draw_frame_3d(ax3d, gate_c, gate_yaw, FRAME_OPENING / 2, "tab:cyan", lw=1.5)
-    _draw_frame_top(axtop, gate_c, gate_yaw, FRAME_WIDTH / 2, "tab:blue", lw=3)
-    _draw_frame_top(axtop, gate_c, gate_yaw, FRAME_OPENING / 2, "tab:cyan", lw=4)
-    axtop.scatter([gate_c[0]], [gate_c[1]], c="blue", s=70, marker="o", edgecolor="k", zorder=8)
+    _draw_frame_top(ax, gate_c, gate_yaw, FRAME_WIDTH / 2, "tab:blue", lw=3.0)
+    _draw_frame_top(ax, gate_c, gate_yaw, FRAME_OPENING / 2, "tab:cyan", lw=4.0)
+    ax.scatter([gate_c[0]], [gate_c[1]], c="tab:blue", s=45, marker="o",
+               edgecolor="k", zorder=6)
 
     # nearby context gates (faded)
     for gc, gy in zip(np.asarray(pGLL_array, float), np.asarray(y_GBL_array, float)):
         if np.allclose(gc, gate_c) or not near(gc):
             continue
-        _draw_frame_3d(ax3d, gc, gy, FRAME_WIDTH / 2, "gray", lw=1.0, alpha=0.4)
-        _draw_frame_top(axtop, gc, gy, FRAME_WIDTH / 2, "gray", lw=1.0, alpha=0.4)
+        _draw_frame_top(ax, gc, gy, FRAME_WIDTH / 2, "gray", lw=1.0, alpha=0.4)
 
-    # nearby obstacles: keep-out shells (top-down) + light pillar rings (3D)
-    th = np.linspace(0, 2 * np.pi, 40)
+    # nearby obstacles: keep-out shells (top-down)
+    obst_labeled = False
     for o in np.asarray(pOLL_array, float).reshape(-1, 3):
         if not near(o):
             continue
-        axtop.add_patch(plt.Circle((o[0], o[1]), R_OBSTACLE + CLEARANCE, color="orange", alpha=0.20))
-        axtop.add_patch(plt.Circle((o[0], o[1]), R_OBSTACLE, color="firebrick", alpha=0.55))
-        for zz in (gate_c[2] - pad, gate_c[2] + pad):
-            ax3d.plot(o[0] + R_OBSTACLE * np.cos(th), o[1] + R_OBSTACLE * np.sin(th),
-                      np.full_like(th, zz), color="firebrick", lw=1.0, alpha=0.6)
-        ax3d.plot([o[0], o[0]], [o[1], o[1]], [gate_c[2] - pad, gate_c[2] + pad],
-                  color="firebrick", lw=1.2, alpha=0.6)
+        ax.add_patch(plt.Circle((o[0], o[1]), R_OBSTACLE + CLEARANCE,
+                                color="orange", alpha=0.18, zorder=1))
+        ax.add_patch(plt.Circle((o[0], o[1]), R_OBSTACLE,
+                                color="firebrick", alpha=0.55, zorder=2,
+                                label=None if obst_labeled else "obstacle keep-out"))
+        obst_labeled = True
 
-    # local zoom around the gate
-    ax3d.set_xlim(gate_c[0] - pad, gate_c[0] + pad)
-    ax3d.set_ylim(gate_c[1] - pad, gate_c[1] + pad)
-    ax3d.set_zlim(gate_c[2] - pad, gate_c[2] + pad)
-    ax3d.set_box_aspect((1, 1, 1))
-    ax3d.set_xlabel("x [m]"); ax3d.set_ylabel("y [m]"); ax3d.set_zlabel("z [m]")
-    ax3d.set_title(f"3-way gate detour — iter {outer_iter}  (chosen: {winner_name})")
-    ax3d.legend(loc="upper left", fontsize=8)
-
-    axtop.set_xlim(gate_c[0] - pad, gate_c[0] + pad)
-    axtop.set_ylim(gate_c[1] - pad, gate_c[1] + pad)
-    axtop.set_aspect("equal"); axtop.grid(alpha=0.3)
-    axtop.set_xlabel("x [m]"); axtop.set_ylabel("y [m]")
-    axtop.set_title("top-down")
-    axtop.legend(loc="upper left", fontsize=8)
-
-    fig.suptitle(
-        f"Gate at ({gate_c[0]:.2f}, {gate_c[1]:.2f}, {gate_c[2]:.2f}) — "
-        f"chosen '{winner_name}', grey = rejected candidates", fontsize=12)
+    # local zoom around the gate (x:y = 5:4)
+    ax.set_xlim(gate_c[0] - pad * 1.25, gate_c[0] + pad * 1.25)
+    ax.set_ylim(gate_c[1] - pad, gate_c[1] + pad)
+    ax.set_aspect("equal")
+    ax.grid(alpha=0.3)
+    ax.set_xlabel("x [m]", fontsize=20)
+    ax.set_ylabel("y [m]", fontsize=20)
+    ax.tick_params(axis="both", labelsize=17)
+    ax.locator_params(axis="both", nbins=4)   # <= 5 ticks per axis
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=3,
+              fontsize=14, frameon=False, columnspacing=1.2)
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.26)   # room for the legend band below the axes
 
     pdf_path = os.path.join(save_dir, f"gate_candidates_iter{outer_iter:02d}.pdf")
 
@@ -217,21 +267,22 @@ def plot_gate_candidates(
 
         def _on_key(event):
             if event.key == "s":
-                p = os.path.join(save_dir, f"gate_candidates_iter{outer_iter:02d}_snap{snap['k']}.pdf")
-                fig.savefig(p)
+                p = os.path.join(save_dir,
+                                 f"gate_candidates_iter{outer_iter:02d}_snap{snap['k']}.pdf")
+                fig.savefig(p, bbox_inches="tight")
                 snap["k"] += 1
                 print(f"[gate candidates] snapshot -> {p}")
 
         cid = fig.canvas.mpl_connect("key_press_event", _on_key)
-        print("[gate candidates] rotate the 3D view; press 's' to snapshot an angle; "
-              "close the window to save the final angle and continue.")
+        print("[gate candidates] pan/zoom to frame it; press 's' to snapshot; "
+              "close the window to save the current view and continue.")
         plt.show(block=True)          # blocks until you close the window
         try:
             fig.canvas.mpl_disconnect(cid)
         except Exception:
             pass
 
-    fig.savefig(pdf_path)             # vector PDF at the current (closed) angle
+    fig.savefig(pdf_path, bbox_inches="tight")   # vector PDF at the current (closed) view
     print(f"[gate candidates] saved {pdf_path}")
     plt.close(fig)
     return pdf_path
