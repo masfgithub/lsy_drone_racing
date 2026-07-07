@@ -244,12 +244,12 @@ def plot_obstacle_candidates(
         ax.set_ylim(obst_c[1] - pad, obst_c[1] + pad)
         ax.set_aspect("equal")
         ax.grid(alpha=0.3)
-        ax.set_xlabel("x [m]", fontsize=20)
-        ax.set_ylabel("y [m]", fontsize=20)
-        ax.tick_params(axis="both", labelsize=17)
+        ax.set_xlabel("x [m]", fontsize=25)
+        ax.set_ylabel("y [m]", fontsize=25)
+        ax.tick_params(axis="both", labelsize=22)
         ax.locator_params(axis="both", nbins=4)   # <= 5 ticks per axis
         ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.16),
-                  ncol=3, fontsize=14, frameon=False, columnspacing=1.2)
+                  ncol=3, fontsize=16, frameon=False, columnspacing=1.2)
 
     def finish(fig, ax, view):
         if view is not None:

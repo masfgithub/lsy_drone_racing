@@ -234,13 +234,11 @@ def plot_gate_candidates(
             continue
         _draw_frame_top(ax, gc, gy, FRAME_WIDTH / 2, "gray", lw=1.0, alpha=0.4)
 
-    # nearby obstacles: keep-out shells (top-down)
+    # nearby obstacles: keep-out core (top-down), matching the obstacle plot style
     obst_labeled = False
     for o in np.asarray(pOLL_array, float).reshape(-1, 3):
         if not near(o):
             continue
-        ax.add_patch(plt.Circle((o[0], o[1]), R_OBSTACLE + CLEARANCE,
-                                color="orange", alpha=0.18, zorder=1))
         ax.add_patch(plt.Circle((o[0], o[1]), R_OBSTACLE,
                                 color="firebrick", alpha=0.55, zorder=2,
                                 label=None if obst_labeled else "obstacle keep-out"))
@@ -251,12 +249,12 @@ def plot_gate_candidates(
     ax.set_ylim(gate_c[1] - pad, gate_c[1] + pad)
     ax.set_aspect("equal")
     ax.grid(alpha=0.3)
-    ax.set_xlabel("x [m]", fontsize=20)
-    ax.set_ylabel("y [m]", fontsize=20)
-    ax.tick_params(axis="both", labelsize=17)
+    ax.set_xlabel("x [m]", fontsize=25)
+    ax.set_ylabel("y [m]", fontsize=25)
+    ax.tick_params(axis="both", labelsize=22)
     ax.locator_params(axis="both", nbins=4)   # <= 5 ticks per axis
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=3,
-              fontsize=14, frameon=False, columnspacing=1.2)
+              fontsize=16, frameon=False, columnspacing=1.2)
     fig.tight_layout()
     fig.subplots_adjust(bottom=0.26)   # room for the legend band below the axes
 
