@@ -503,7 +503,7 @@ class MPCCpp(ControllerInterface):
         info: dict,
         config: dict,
         t_total: int,
-        n_horizon: int = 20,
+        n_horizon: int = 40,
         t_horizon: float = 0.7,
         mu: float = 8.0,
         q_lag: float = 80.0,
@@ -658,8 +658,6 @@ class MPCCpp(ControllerInterface):
         self._w_nom = float(w_nom)
         self._h_nom = float(h_nom)
         # Tunnel cross-section target at the gates (half the hole opening).
-        # self._gates_information["hole_width"] = 0.1
-        # self._gates_information["hole_height"] = 0.1
         self._gate_w_half = self._gates_information["hole_width"] / 2.0
         self._gate_h_half = self._gates_information["hole_height"] / 2.0
         self._tunnel_sigma = float(tunnel_sigma)

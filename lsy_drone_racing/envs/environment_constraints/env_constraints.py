@@ -27,9 +27,9 @@ Usage in MPC_main.py:
 
 import numpy as np
 from casadi import MX, vertcat
+from lsy_drone_racing.envs.environment_constraints.window import Window
 
 from lsy_drone_racing.envs.environment_constraints.obstacle import CylinderObstacle
-from lsy_drone_racing.envs.environment_constraints.window import Window
 
 
 def get_obstacle_objects(
