@@ -1,89 +1,55 @@
-"""Controller that follows a pre-defined trajectory.
-
-It uses a cubic spline interpolation to generate a smooth trajectory through a series of waypoints.
-At each time step, the controller computes the next desired position by evaluating the spline.
-
-.. note::
-    The waypoints are hard-coded in the controller for demonstration purposes. In practice, you
-    would need to generate the splines adaptively based on the track layout, and recompute the
-    trajectory if you receive updated gate and obstacle poses.
-"""
+"""Controller driving the SplinePlanner (replans only when triggered)."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 import numpy as np
-from crazyflow.sim.visualize import draw_line, draw_points
-from scipy.interpolate import CubicSpline
 
 from lsy_drone_racing.control import Controller
+from lsy_drone_racing.control.env_obs import extract_env_states
+from lsy_drone_racing.control.planner.SplinePlanner import SplinePlanner
 
 if TYPE_CHECKING:
     from crazyflow import Sim
     from numpy.typing import NDArray
 
+    from lsy_drone_racing.control.env_obs import EnvState
+
 
 class StateController(Controller):
-    """State controller following a pre-defined trajectory."""
+    """Controller driving the SplinePlanner, replanning only when triggered."""
 
     def __init__(self, obs: dict[str, NDArray[np.floating]], info: dict, config: dict):
-        """Initialization of the controller.
-
-        Args:
-            obs: The initial observation of the environment's state. See the environment's
-                observation space for details.
-            info: The initial environment information from the reset.
-            config: The race configuration. See the config files for details. Contains additional
-                information such as disturbance configurations, randomizations, etc.
-        """
+        """Initialize the planner and the initial trajectory."""
         super().__init__(obs, info, config)
         self._freq = config.env.freq
-
-        # Same waypoints as in the attitude controller. Determined by trial and error.
-        start_pos = obs["pos"]
-        waypoints = np.array(
-            [
-                start_pos,
-                [-1.0, 0.75, 0.4],
-                [0.3, 0.35, 0.7],
-                [1.3, -0.15, 0.9],
-                [0.85, 0.85, 1.2],
-                [-0.5, -0.05, 0.7],
-                [-1.2, -0.2, 0.8],
-                [-1.2, -0.2, 1.2],
-                [-0.0, -0.7, 1.2],
-                [0.5, -0.75, 1.2],
-            ]
-        )
-        self._t_total = 18  # s
-        t = np.linspace(0, self._t_total, len(waypoints))
-        self._des_pos_spline = CubicSpline(t, waypoints)
-
         self._tick = 0
         self._finished = False
+        self._t_total = 12
+
+        env_states = extract_env_states(obs)
+        self.old_env = env_states
+        self._planner = SplinePlanner(env_states, info, config, self._t_total, max_speed=2.0)
+        self._trajectory = self._planner.trajectory
+        self._setpoint = env_states.p_bll.copy()
 
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
     ) -> NDArray[np.floating]:
-        """Compute the next desired state of the drone.
-
-        Args:
-            obs: The current observation of the environment. See the environment's observation space
-                for details.
-            info: Optional additional information as a dictionary.
-
-        Returns:
-            The drone state [x, y, z, vx, vy, vz, ax, ay, az, yaw, rrate, prate, yrate] as a numpy
-                array.
-        """
-        t = min(self._tick / self._freq, self._t_total)
-        if t >= self._t_total:  # Maximum duration reached
+        """Compute the next desired setpoint along the current trajectory."""
+        env_states = extract_env_states(obs)
+        t = self._tick / self._freq
+        if self._should_replan(env_states):
+            self._trajectory = self._planner.replan(env_states, t)
+        des_pos = self._planner.setpoint_at(t).copy()
+        des_pos[2] = max(des_pos[2], 0.1)
+        if int(np.atleast_1d(env_states.p_tll_index).ravel()[0]) < 0:
             self._finished = True
-
-        des_pos = self._des_pos_spline(t)
-        action = np.concatenate((des_pos, np.zeros(10)), dtype=np.float32)
-        return action
+        if t >= self._planner.duration:
+            self._finished = True
+        self._setpoint = des_pos
+        return np.concatenate((des_pos, np.zeros(10)), dtype=np.float32)
 
     def step_callback(
         self,
@@ -94,21 +60,39 @@ class StateController(Controller):
         truncated: bool,
         info: dict,
     ) -> bool:
-        """Increment the time step counter.
-
-        Returns:
-            True if the controller is finished, False otherwise.
-        """
+        """Advance the internal tick and report whether the episode is finished."""
         self._tick += 1
         return self._finished
 
     def episode_callback(self):
-        """Reset the internal state."""
+        """Reset the internal tick counter at the start of a new episode."""
         self._tick = 0
 
     def render_callback(self, sim: Sim):
-        """Visualize the desired trajectory and the current setpoint."""
-        setpoint = self._des_pos_spline(self._tick / self._freq).reshape(1, -1)
-        draw_points(sim, setpoint, rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
-        trajectory = self._des_pos_spline(np.linspace(0, self._t_total, 100))
-        draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
+        """Draw the current trajectory and setpoint in the simulator."""
+        from crazyflow.sim.visualize import draw_line, draw_points
+
+        positions = self._trajectory.positions
+        step = max(1, len(positions) // 100)
+        draw_line(sim, positions[::step], rgba=(0.0, 1.0, 0.0, 1.0))
+        draw_points(sim, self._setpoint.reshape(1, -1), rgba=(1.0, 0.0, 0.0, 1.0), size=0.02)
+
+    def _should_replan(self, obs: EnvState) -> bool:
+        """Return True if the gates moved or an obstacle now blocks the trajectory."""
+        gate_margin = 0.01
+
+        old_gates = np.asarray(self.old_env.p_tll_array)
+        current_gates = np.asarray(obs.p_tll_array)
+
+        gate_distance = np.linalg.norm(old_gates - current_gates)
+
+        if gate_distance > gate_margin:
+            return True
+
+        obsticles = np.asarray(self.old_env.p_oll_array)
+
+        pos = self._trajectory.positions
+        for o in obsticles:
+            if np.any(np.linalg.norm(pos[:, :2] - o[:2], axis=1) < 0.2):
+                return True
+        return False

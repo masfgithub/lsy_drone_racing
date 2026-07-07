@@ -78,3 +78,17 @@ If your code fails the automated tests, it is likely to encounter the same issue
 For full details, refer to the [documentation](https://learnsyslab.github.io/lsy_drone_racing/).
 
 ---
+
+## MPCC++ for Autonomous Drone Racing
+
+## ⚠️ Known regression: success rate after merging `main`
+After the merge with `main`, the evaluation success rate dropped — likely caused
+by the `main` resync. The results reported in the paper and evaluation were
+produced with commit **`fd0838b12f7081ce618c23fc6239207d59269768`**.
+**If you see a lower success rate, check out that commit to reproduce the reported results:**
+```bash
+git checkout fd0838b12f7081ce618c23fc6239207d59269768
+```
+
+Follow this link for additonal information regarding the project and how to launch it:
+[docs/mpccpp.md](docs/project_info.md).

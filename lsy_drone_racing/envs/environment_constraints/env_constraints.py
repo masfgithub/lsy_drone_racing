@@ -9,7 +9,7 @@ Usage in MPC_main.py:
 
     env = create_env_constraints(
         model         = model,
-        pBLL       = pBLL,
+        p_bll       = p_bll,
         gates         = gates,
         obstacles     = obstacles,
     )
@@ -27,13 +27,9 @@ Usage in MPC_main.py:
 
 import numpy as np
 from casadi import MX, vertcat
+from lsy_drone_racing.envs.environment_constraints.window import Window
 
-try:
-    from obstacle import CylinderObstacle
-    from window import Window
-except ImportError:
-    from lsy_drone_racing.control.nmpc.obstacle import CylinderObstacle
-    from lsy_drone_racing.control.nmpc.window import Window
+from lsy_drone_racing.envs.environment_constraints.obstacle import CylinderObstacle
 
 
 def get_obstacle_objects(
@@ -101,7 +97,7 @@ def build_param_vector(gates: list[Window], obstacles: list[CylinderObstacle]) -
 
 
 def create_env_constraints(
-    model: object, pBLL: MX, gates: list[Window], obstacles: list[CylinderObstacle] | None = None
+    model: object, p_bll: MX, gates: list[Window], obstacles: list[CylinderObstacle] | None = None
 ) -> dict:
     """Attach environment constraints to an AcadosModel as runtime parameters.
 
@@ -110,7 +106,7 @@ def create_env_constraints(
 
     Args:
         model:     AcadosModel — must not yet have model.p set.
-        pBLL:   CasADi MX of shape (3,) — the position symbol from model.x.
+        p_bll:   CasADi MX of shape (3,) — the position symbol from model.x.
         gates:     List of Window objects.
         obstacles: List of CylinderObstacle objects (may be empty or None).
 
@@ -143,14 +139,14 @@ def create_env_constraints(
     offset = 0
     for gate in gates:
         p_win = p[offset : offset + Window.N_PARAMS]
-        h_list.append(Window.casadi_constraints_sym(pBLL, p_win))
+        h_list.append(Window.casadi_constraints_sym(p_bll, p_win))
         lh_list.append(gate.margin)
         offset += Window.N_PARAMS
 
     # ── Cylinder obstacle constraints ─────────────────────────────────────────
     for obs in obstacles:
         p_obs = p[offset : offset + CylinderObstacle.N_PARAMS]
-        h_list.append(CylinderObstacle.casadi_constraint_sym(pBLL, p_obs))
+        h_list.append(CylinderObstacle.casadi_constraint_sym(p_bll, p_obs))
         lh_list.append(obs.d_min)
         offset += CylinderObstacle.N_PARAMS
 

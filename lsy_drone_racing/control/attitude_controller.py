@@ -124,8 +124,8 @@ class AttitudeController(Controller):
         y_axis_desired /= np.linalg.norm(y_axis_desired)
         x_axis_desired = np.cross(y_axis_desired, z_axis_desired)
 
-        R_desired = np.vstack([x_axis_desired, y_axis_desired, z_axis_desired]).T
-        euler_desired = R.from_matrix(R_desired).as_euler("xyz", degrees=False)
+        r_desired = np.vstack([x_axis_desired, y_axis_desired, z_axis_desired]).T
+        euler_desired = R.from_matrix(r_desired).as_euler("xyz", degrees=False)
 
         action = np.concatenate([euler_desired, [thrust_desired]], dtype=np.float32)
 

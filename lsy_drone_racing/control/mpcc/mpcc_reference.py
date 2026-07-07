@@ -1,7 +1,4 @@
-"""
-mpcc_reference.py
------------------
-Arc-length-parameterized 3D reference path for MPCC (Romero et al. 2022).
+"""Arc-length-parameterized 3D reference path for MPCC (Romero et al. 2022).
 
 The MPCC controller only requires a *continuously differentiable* 3D path
 p_d(theta), parameterized by arc length theta. It does NOT need to be
@@ -23,8 +20,28 @@ from scipy.interpolate import CubicSpline
 
 
 class ReferencePath:
-    def __init__(self, points, closed=False, gate_indices=None,
-                 qc_nom=1.0, qc_gate=100.0, gate_sigma=0.6):
+    """Arc-length-parameterized C2 cubic-spline path with gate-weighted contour cost."""
+
+    def __init__(
+        self,
+        points: np.ndarray,
+        closed: bool = False,
+        gate_indices: list[int] | None = None,
+        qc_nom: float = 1.0,
+        qc_gate: float = 100.0,
+        gate_sigma: float = 0.6,
+    ):
+        """Fit the spline path through the given points.
+
+        Args:
+            points: Sampled 3D path points, shape (P, 3).
+            closed: Whether the path is a closed loop.
+            gate_indices: Indices into points marking gate locations, used for
+                the qc() contour-weight bump.
+            qc_nom: Nominal contour weight away from gates.
+            qc_gate: Contour weight at gate locations.
+            gate_sigma: Width (in arc length) of the qc bump around each gate.
+        """
         points = np.asarray(points, dtype=float)
         assert points.ndim == 2 and points.shape[1] == 3, "points must be (P,3)"
 
@@ -41,10 +58,10 @@ class ReferencePath:
         self._sx = CubicSpline(s, points[:, 0], bc_type=bc)
         self._sy = CubicSpline(s, points[:, 1], bc_type=bc)
         self._sz = CubicSpline(s, points[:, 2], bc_type=bc)
-        self._dx, self._dy, self._dz = (sp.derivative(1) for sp in
-                                        (self._sx, self._sy, self._sz))
-        self._d2x, self._d2y, self._d2z = (sp.derivative(2) for sp in
-                                           (self._sx, self._sy, self._sz))
+        self._dx, self._dy, self._dz = (sp.derivative(1) for sp in (self._sx, self._sy, self._sz))
+        self._d2x, self._d2y, self._d2z = (
+            sp.derivative(2) for sp in (self._sx, self._sy, self._sz)
+        )
 
         if gate_indices is not None:
             self.gate_s = np.array([s[i] for i in gate_indices], dtype=float)
@@ -56,29 +73,34 @@ class ReferencePath:
         self.gate_sigma = float(gate_sigma)
 
     # ------------------------------------------------------------------ utils
-    def _wrap(self, theta):
+    def _wrap(self, theta: float) -> float:
+        """Clip (open path) or wrap (closed path) theta into [0, length]."""
         if self.closed:
             return float(np.mod(theta, self.length))
         return float(np.clip(theta, 0.0, self.length))
 
-    def eval(self, theta):
+    def eval(self, theta: float) -> np.ndarray:
+        """Path position p_d(theta)."""
         th = self._wrap(theta)
         return np.array([float(self._sx(th)), float(self._sy(th)), float(self._sz(th))])
 
-    def deriv1(self, theta):
+    def deriv1(self, theta: float) -> np.ndarray:
+        """First derivative p_d'(theta)."""
         th = self._wrap(theta)
         return np.array([float(self._dx(th)), float(self._dy(th)), float(self._dz(th))])
 
-    def deriv2(self, theta):
+    def deriv2(self, theta: float) -> np.ndarray:
+        """Second derivative p_d''(theta)."""
         th = self._wrap(theta)
         return np.array([float(self._d2x(th)), float(self._d2y(th)), float(self._d2z(th))])
 
-    def tangent(self, theta):
+    def tangent(self, theta: float) -> np.ndarray:
+        """Unit tangent vector at theta."""
         t = self.deriv1(theta)
         n = np.linalg.norm(t)
         return t / n if n > 1e-9 else np.array([1.0, 0.0, 0.0])
 
-    def qc(self, theta):
+    def qc(self, theta: float) -> float:
         """Dynamic contour weight: nominal away from gates, raised near gates."""
         if self.gate_s.size == 0:
             return self.qc_nom
@@ -91,7 +113,14 @@ class ReferencePath:
         return self.qc_nom + (self.qc_gate - self.qc_nom) * bump
 
     # ------------------------------------------------------------- projection
-    def project(self, pos, theta_guess=None, n_coarse=400, n_newton=5):
+    def project(
+        self,
+        pos: np.ndarray,
+        theta_guess: float | None = None,
+        n_coarse: int = 400,
+        n_newton: int = 5,
+    ) -> float:
+        """Find theta minimizing ||p_d(theta) - pos||^2 via coarse search + Newton refinement."""
         pos = np.asarray(pos, dtype=float)
         if theta_guess is None:
             grid = np.linspace(0.0, self.length, n_coarse, endpoint=not self.closed)

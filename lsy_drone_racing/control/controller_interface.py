@@ -1,4 +1,4 @@
-"""<For RUFF: Brief description of what this module does>."""
+"""Abstract base class defining the controller interface used by the racing pipeline."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-    from lsy_drone_racing.control.env_obs import EnvState_t
+    from lsy_drone_racing.control.env_obs import EnvState
 
 
 class ControllerInterface(ABC):
     """Base class for controller implementations."""
 
-    def __init__(self, obs: EnvState_t, planner: dict, info: dict, config: dict, t_total: int):
+    def __init__(self, obs: EnvState, planner: dict, info: dict, config: dict, t_total: int):
         """Initialization of the controller.
 
         Instructions:
@@ -26,16 +26,18 @@ class ControllerInterface(ABC):
         Args:
             obs: The initial observation of the environment's state. See the environment's
                 observation space for details.
-            planner: TBD
+            planner: The initial planned trajectory, forwarded to `set_ref_traj()` to seed the
+                controller's reference.
             info: The initial environment information from the reset.
             config: The race configuration. See the config files for details. Contains additional
 
                 information such as disturbance configurations, randomizations, etc.
-            t_total: TBD ruff
+            t_total: Total duration of the episode in seconds, used to size the controller's
+                internal horizon/tick bookkeeping.
         """
 
     @abstractmethod
-    def control(self, obs: EnvState_t, info: dict | None = None) -> NDArray[np.floating]:
+    def control(self, obs: EnvState, info: dict | None = None) -> NDArray[np.floating]:
         """Compute the next desired state of the drone.
 
         Instructions:
@@ -53,68 +55,85 @@ class ControllerInterface(ABC):
 
     @abstractmethod
     def set_ref_traj(self, ref_traj: dict):
-        """TBD: for Ruff.
+        """Adopt a (re-)planned trajectory as the controller's tracking reference.
+
+        Instructions:
+            Implement this method to store the planner's output (e.g. position/velocity
+            waypoints) in whatever internal representation the controller needs for
+            tracking, and to reset any progress/theta bookkeeping tied to the old
+            reference.
 
         Args:
-            ref_traj: TBD.
-            TBD: for Ruff.
+            ref_traj: The planner's trajectory output (e.g. a Trajectory dataclass with
+                `.positions`/`.velocities`, or a planner-specific dict).
 
         Returns:
-            TBD: for Ruff.
+            None.
         """
         return
 
     def reset(self):
-        """TBD: for Ruff.
+        """Reset internal controller state for a new episode.
 
-        Args:
-            TBD: for Ruff.
+        Instructions:
+            Implement this method to reset counters (e.g. the tick) and any other
+            per-episode state so the controller can be reused across resets without
+            being reconstructed.
 
         Returns:
-            TBD: for Ruff.
+            None.
         """
         return
 
     def set_tick(self, tick: int):
-        """TBD: for Ruff.
+        """Set the controller's internal tick/step counter.
+
+        Instructions:
+            Implement this method to synchronize the controller's notion of elapsed
+            steps with the environment's, e.g. after an external tick update.
 
         Args:
-            tick: TBD for Ruff.
+            tick: The current environment step count.
 
         Returns:
-            TBD: for Ruff.
+            None.
         """
         return
 
     def get_states(self):
-        """TBD: for Ruff.
+        """Return the controller's current internal state, for logging/debugging.
 
-        Args:
-            TBD: for Ruff.
+        Instructions:
+            Implement this method to expose whatever internal state (e.g. solver
+            state, predicted commands) is useful for inspection outside the
+            controller.
 
         Returns:
-            TBD: for Ruff.
+            The controller's internal state, in a controller-specific format.
         """
         return
 
     def get_predicted_traj(self):
-        """TBD: for Ruff.
+        """Return the controller's predicted position trajectory over its horizon.
 
-        Args:
-            TBD: for Ruff.
+        Instructions:
+            Implement this method to return the predicted (x, y, z) positions computed
+            by the last `control()` call, e.g. for rendering or diagnostics.
 
         Returns:
-            TBD: for Ruff.
+            An array of predicted positions over the prediction horizon.
         """
         return
 
     def get_ref_traj(self):
-        """TBD: for Ruff.
+        """Return the reference trajectory segment the controller is currently tracking.
 
-        Args:
-            TBD: for Ruff.
+        Instructions:
+            Implement this method to return the slice of the reference trajectory
+            (set via `set_ref_traj()`) relevant to the current tick, e.g. for
+            rendering or diagnostics.
 
         Returns:
-            TBD: for Ruff.
+            An array of reference positions.
         """
         return

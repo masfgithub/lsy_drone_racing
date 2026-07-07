@@ -10,7 +10,7 @@ from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation as R
 
 from lsy_drone_racing.control.controller_interface import ControllerInterface
-from lsy_drone_racing.control.nmpc.env_soft_constraints import (
+from lsy_drone_racing.envs.environment_constraints.env_soft_constraints import (
     get_gate_objects,
     get_obstacle_objects,
 )
@@ -18,7 +18,7 @@ from lsy_drone_racing.control.nmpc.env_soft_constraints import (
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from lsy_drone_racing.control.env_obs import EnvState_t
+    from lsy_drone_racing.control.env_obs import EnvState
 
 
 class MPCC(ControllerInterface):
@@ -32,13 +32,13 @@ class MPCC(ControllerInterface):
 
     def __init__(
         self,
-        obs: EnvState_t,
+        obs: EnvState,
         planner: dict,
         info: dict,
         config: dict,
         t_total: int,
-        N_horizon: int = 40,
-        T_horizon: float = 0.7,
+        n_horizon: int = 40,
+        t_horizon: float = 0.7,
         model_arc_step: float = 0.05,
         model_traj_length: float = 15.0,
         q_lag: float = 80.0,
@@ -61,8 +61,8 @@ class MPCC(ControllerInterface):
             info:              Initial environment information.
             config:            Race configuration (config.env.freq, config.sim.drone_model).
             t_total:           Total trajectory duration in seconds.
-            N_horizon:         MPC prediction horizon (steps).
-            T_horizon:         MPC prediction horizon (seconds).
+            n_horizon:         MPC prediction horizon (steps).
+            t_horizon:         MPC prediction horizon (seconds).
             model_arc_step:    Arc-length discretization for trajectory encoding (m).
             model_traj_length: Total arc-length encoded in the OCP parameters (m).
             q_lag:             Lag-error tracking weight.
@@ -79,8 +79,8 @@ class MPCC(ControllerInterface):
         """
         super().__init__(obs, planner, info, config, t_total)
 
-        self._N = N_horizon
-        self._T = T_horizon
+        self._N = n_horizon
+        self._T = t_horizon
         self._model_arc_step = model_arc_step
         self._model_traj_length = model_traj_length
         self._t_total = t_total
@@ -89,12 +89,17 @@ class MPCC(ControllerInterface):
         self._finished = False
 
         self._cost_cfg = {
-            "q_lag": q_lag, "q_lag_peak": q_lag_peak,
-            "q_contour": q_contour, "q_contour_peak": q_contour_peak,
+            "q_lag": q_lag,
+            "q_lag_peak": q_lag_peak,
+            "q_contour": q_contour,
+            "q_contour_peak": q_contour_peak,
             "q_attitude": q_attitude,
-            "r_thrust": r_thrust, "r_roll": r_roll,
-            "r_pitch": r_pitch, "r_yaw": r_yaw,
-            "mu_speed": mu_speed, "w_speed_gate": w_speed_gate,
+            "r_thrust": r_thrust,
+            "r_roll": r_roll,
+            "r_pitch": r_pitch,
+            "r_yaw": r_yaw,
+            "mu_speed": mu_speed,
+            "w_speed_gate": w_speed_gate,
         }
 
         self.drone_params = load_params("so_rpy", config.sim.drone_model)
@@ -103,16 +108,19 @@ class MPCC(ControllerInterface):
         self._hover_thrust = self._mass * self._gravity
 
         self._gates_information = {
-            "total_length": 0.8, "total_height": 0.8,
-            "hole_width": 0.23, "hole_height": 0.23,
-            "thickness": 0.35, "margin": 0.05,
+            "total_length": 0.8,
+            "total_height": 0.8,
+            "hole_width": 0.23,
+            "hole_height": 0.23,
+            "thickness": 0.35,
+            "margin": 0.05,
         }
         self._obstacles_information = {"d_min": 0.15, "total_height": 2.0}
 
         # Gate/obstacle objects are updated each control step for render_callback
-        gates_quat_wxyz = np.roll(obs.qTLT_array, 1, axis=-1)
-        self._gates = get_gate_objects(obs.pTLL_array, gates_quat_wxyz, self._gates_information)
-        self._obstacles = get_obstacle_objects(obs.pOLL_array, self._obstacles_information)
+        gates_quat_wxyz = np.roll(obs.q_tlt_array, 1, axis=-1)
+        self._gates = get_gate_objects(obs.p_tll_array, gates_quat_wxyz, self._gates_information)
+        self._obstacles = get_obstacle_objects(obs.p_oll_array, self._obstacles_information)
 
         # Build arc-length spline from the planner's time-parameterised spline.
         # _model_arc_step and _model_traj_length must be set before this call.
@@ -133,7 +141,7 @@ class MPCC(ControllerInterface):
         self._nu = self._ocp.model.u.rows()
 
         # Encode the trajectory into solver parameters and set them for every stage.
-        param_vec = self._encode_trajectory_params(obs.pTLL_array)
+        param_vec = self._encode_trajectory_params(obs.p_tll_array)
         for k in range(self._N + 1):
             self._acados_ocp_solver.set(k, "p", param_vec)
 
@@ -180,8 +188,7 @@ class MPCC(ControllerInterface):
             s_ext = np.linspace(traj_arc_length, traj_arc_length + self._model_traj_length, n_ext)
             pos_ext = pts_u[-1] + (s_ext - traj_arc_length)[:, None] * t_unit
             arc_spline = CubicSpline(
-                np.concatenate([arc_u, s_ext[1:]]),
-                np.concatenate([pts_u, pos_ext[1:]]),
+                np.concatenate([arc_u, s_ext[1:]]), np.concatenate([pts_u, pos_ext[1:]])
             )
         else:
             arc_spline = CubicSpline(arc_u, pts_u)
@@ -203,7 +210,7 @@ class MPCC(ControllerInterface):
         theta_s = np.arange(0.0, self._model_traj_length, self._model_arc_step)[: self._n_samples]
         s_clip = np.clip(theta_s, 0.0, float(self._arc_spline.x[-1]))
 
-        pd_vals = self._arc_spline(s_clip)               # (n, 3) positions
+        pd_vals = self._arc_spline(s_clip)  # (n, 3) positions
         tp_vals = self._arc_spline.derivative()(s_clip)  # (n, 3) ≈ unit tangents
 
         qc = np.zeros(self._n_samples)
@@ -218,29 +225,31 @@ class MPCC(ControllerInterface):
     # ControllerInterface implementation
     # ──────────────────────────────────────────────────────────────────────────
 
-    def control(self, obs: EnvState_t, info: dict | None = None) -> NDArray[np.floating]:
+    def control(self, obs: EnvState, info: dict | None = None) -> NDArray[np.floating]:
         """Compute attitude + collective-thrust command via MPCC.
 
         Returns:
             np.ndarray of shape (4,): [roll_cmd, pitch_cmd, yaw_cmd, thrust_cmd].
         """
         # Update gate/obstacle objects each step for render_callback visualisation.
-        gates_quat_wxyz = np.roll(obs.qTLT_array, 1, axis=-1)
-        self._gates = get_gate_objects(obs.pTLL_array, gates_quat_wxyz, self._gates_information)
-        self._obstacles = get_obstacle_objects(obs.pOLL_array, self._obstacles_information)
+        gates_quat_wxyz = np.roll(obs.q_tlt_array, 1, axis=-1)
+        self._gates = get_gate_objects(obs.p_tll_array, gates_quat_wxyz, self._gates_information)
+        self._obstacles = get_obstacle_objects(obs.p_oll_array, self._obstacles_information)
 
         # Convert quaternion to Euler RPY.
-        rpy = R.from_quat(obs.qBLB).as_euler("xyz")
+        rpy = R.from_quat(obs.q_blb).as_euler("xyz")
 
         # Build full state vector from observable state + internal controller state.
-        x0 = np.concatenate([
-            obs.pBLL,
-            obs.vBLL,
-            rpy,
-            [self.last_f_col, self.last_f_cmd],
-            self.last_rpy_cmd,
-            [self.last_theta],
-        ])
+        x0 = np.concatenate(
+            [
+                obs.p_bll,
+                obs.v_bll,
+                rpy,
+                [self.last_f_col, self.last_f_cmd],
+                self.last_rpy_cmd,
+                [self.last_theta],
+            ]
+        )
 
         # Shift warm start by one step; duplicate last entry.
         if not hasattr(self, "_x_warm"):
