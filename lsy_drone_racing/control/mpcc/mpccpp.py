@@ -351,16 +351,16 @@ def _gate_anchored_centerline(
     knots = [np.asarray(start_pos, dtype=float)]
     for c, n in zip(centers, normals):
         nn = n / (np.linalg.norm(n) + 1e-12)
-        knots.append(c - delta * nn)   # pre-gate helper: tangent -> gate normal
-        knots.append(c)                # gate center (curve passes through it)
-        knots.append(c + delta * nn)   # post-gate helper
+        knots.append(c - delta * nn)  # pre-gate helper: tangent -> gate normal
+        knots.append(c)  # gate center (curve passes through it)
+        knots.append(c + delta * nn)  # post-gate helper
     knots = np.asarray(knots, dtype=float)
 
     # Fit a cubic through the (sparse) knots and resample densely, so that the
     # arc-length reparameterisation downstream is accurate.
     seg = np.linalg.norm(np.diff(knots, axis=0), axis=1)
-    u   = np.concatenate([[0.0], np.cumsum(seg)])
-    u_u, idx = np.unique(u, return_index=True)   # drop coincident knots
+    u = np.concatenate([[0.0], np.cumsum(seg)])
+    u_u, idx = np.unique(u, return_index=True)  # drop coincident knots
     spline = CubicSpline(u_u, knots[idx])
     return spline(np.linspace(0.0, float(u_u[-1]), n_dense))
 
