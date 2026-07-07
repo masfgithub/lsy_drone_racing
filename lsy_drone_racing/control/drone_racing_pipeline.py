@@ -15,7 +15,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from lsy_drone_racing.control.controller import Controller
-from lsy_drone_racing.control.drone_racing_pipeline_config import PLANNER_TYPE
+from lsy_drone_racing.control.drone_racing_pipeline_config import (
+    MU,
+    N_HORIZON,
+    PLANNER_TYPE,
+    T_HORIZON,
+)
 from lsy_drone_racing.control.env_obs import extract_env_states
 from lsy_drone_racing.control.mpcc.mpccpp import MPCCpp
 from lsy_drone_racing.utils.mpccpp_visualizer import render_mpccpp
@@ -55,7 +60,16 @@ class DroneRacingPipeline(Controller):
         # value only makes the sampled path denser -- the geometry is identical.
         self._planner = SplinePlanner(env_states, info, config, t_total)
         trajectory = self._planner.plan(env_states, 0.0)
-        self._controller = MPCCpp(env_states, trajectory, info, config, t_total)
+        self._controller = MPCCpp(
+            env_states,
+            trajectory,
+            info,
+            config,
+            t_total,
+            n_horizon=N_HORIZON,
+            mu=MU,
+            t_horizon=T_HORIZON,
+        )
         # Replan trigger bookkeeping.
         self._nominal_gates_position = env_states.p_tll_array
         self._nominal_obstacles_position = env_states.p_oll_array

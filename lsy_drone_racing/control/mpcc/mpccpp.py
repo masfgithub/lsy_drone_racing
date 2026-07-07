@@ -408,7 +408,7 @@ class MPCCpp(ControllerInterface):
     Identical interface to NMPC / MPCC; drop-in replacement in drone_racing_pipeline.
     """
 
-    # 4.7 seconds
+    # Hint, how to tune the MPCC++ for an average lap time of 4.7 s on the final track.
     #    def __init__(
     #        self,
     #        obs: EnvState,
@@ -452,7 +452,7 @@ class MPCCpp(ControllerInterface):
     #        n_obstacles: int | None = None,
     #    )
 
-    # 5.1 seconds
+    # Hint, how to tune the MPCC++ for an average lap time of 5.1 s on the final track.
     #    def __init__(
     #        self,
     #        obs: EnvState,

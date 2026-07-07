@@ -19,51 +19,55 @@ if TYPE_CHECKING:
     elif PLANNER_TYPE == "Lightweight":
         from lsy_drone_racing.control.planner.lightweight_planner import SplinePlanner
 
+from lsy_drone_racing.control.drone_racing_pipeline_config import (
+    DRAW_ENVIRONMENT_SOFT_OBJECTS,
+    DRAW_MPCCPP_PREDICTION,
+    DRAW_MPCCPP_TUNNEL,
+    DRAW_PLANNER_LINE,
+)
+
 
 def render_mpccpp(sim: Sim, planner: SplinePlanner, controller: MPCCpp):
     """Visualize the planned path, MPC predictions, gates, and obstacles."""
-    # Planned path (green)
-    trajectory = planner.get_pos_traj()
-    draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
+    if DRAW_PLANNER_LINE:
+        # Planned path (green)
+        trajectory = planner.get_pos_traj()
+        draw_line(sim, trajectory, rgba=(0.0, 1.0, 0.0, 1.0))
 
-    # Tunnel centerline for MPCC++ (yellow)
-    # _draw_tunnel_centerline(sim, self._controller._ref)
+    if DRAW_MPCCPP_PREDICTION:
+        # MPC predicted trajectory (purple dots)
+        pred_trajectory = controller.get_predicted_traj()
+        for p in pred_trajectory:
+            draw_points(sim, p.reshape(1, -1), rgba=(0.58, 0.0, 0.83, 0.5), size=0.01)
 
-    # MPC predicted trajectory (purple dots)
-    pred_trajectory = controller.get_predicted_traj()
-    for p in pred_trajectory:
-        draw_points(sim, p.reshape(1, -1), rgba=(0.58, 0.0, 0.83, 0.5), size=0.01)
+    if DRAW_MPCCPP_TUNNEL:
+        # MPCC++ prediction tunnel (cyan edges + yellow corners)
+        _draw_mpccpp_tunnel(sim, controller)
 
-    # MPCC++ prediction tunnel (cyan edges + yellow corners)
-    _draw_mpccpp_tunnel(sim, controller)
-    # Reference trajectory (red dots)
-    # ref_trajectory = self._controller.get_ref_traj()
-    # for p in ref_trajectory:
-    #    draw_points(sim, p.reshape(1, -1), rgba=(1.0, 0.0, 0.0, 0.5), size=0.01)
+    if DRAW_ENVIRONMENT_SOFT_OBJECTS:
+        # Gates
+        for gate in controller._gates:
+            _draw_wedge_gate(
+                sim,
+                position=gate.position,
+                quaternion=gate.quaternion,
+                total_length=gate.total_length,
+                total_height=gate.total_height,
+                hole_width=gate.hole_width,
+                hole_height=gate.hole_height,
+                thickness=gate.thickness,
+                rgba=np.array([0.0, 0.5, 1.0, 1.0]),
+            )
 
-    # Gates
-    #for gate in controller._gates:
-    #    _draw_wedge_gate(
-    #        sim,
-    #        position=gate.position,
-    #        quaternion=gate.quaternion,
-    #        total_length=gate.total_length,
-    #        total_height=gate.total_height,
-    #        hole_width=gate.hole_width,
-    #        hole_height=gate.hole_height,
-    #        thickness=gate.thickness,
-    #        rgba=np.array([0.0, 0.5, 1.0, 1.0]),
-    #    )
-
-    ## Obstacles
-    #for obs in controller._obstacles:
-    #    _draw_cylinder_obstacle(
-    #        sim,
-    #        position=obs.position,
-    #        height=obs.total_height,
-    #        radius=obs.d_min,
-    #        rgba=np.array([1.0, 0.2, 0.2, 0.7]),
-    #    )
+        # Obstacles
+        for obs in controller._obstacles:
+            _draw_cylinder_obstacle(
+                sim,
+                position=obs.position,
+                height=obs.total_height,
+                radius=obs.d_min,
+                rgba=np.array([1.0, 0.2, 0.2, 0.7]),
+            )
 
 
 def _draw_wedge_gate(

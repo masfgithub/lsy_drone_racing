@@ -134,8 +134,8 @@ length before handing the path to MPCC++.
 
 ## 5. Pipeline & Configuration
 
-The stack is launched from `control/drone_racing_pipeline.py`. The active planner
-is selected in `control/drone_racing_pipeline_config.py`.
+The stack is launched from `control/drone_racing_pipeline.py`. 
+Basic configurations like planner selection, basic MPCC++ parameters and visualization setup are selected in `control/drone_racing_pipeline_config.py`.
 
 ```bash
 python scripts/sim.py --config <tomlfile_name>.toml --controller drone_racing_pipeline.py

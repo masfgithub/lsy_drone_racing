@@ -336,7 +336,7 @@ class SplinePlanner(Planner):
         n = 0
         inside_gate = False
         for p in pts:
-            hit, _, _ = self._check_gate(p, pGLL_array, y_GBL_array)
+            hit, _, _ = self._check_gate3(p, pGLL_array, y_GBL_array)
             if hit:
                 if not inside_gate:
                     n += 1
@@ -491,7 +491,7 @@ class SplinePlanner(Planner):
         entry_obst_c = None
 
         for i, p in enumerate(pts):
-            hit, obst_c = self._check_obsticle(p, p_oll_array)
+            hit, obst_c = self._check_obsticle2(p, p_oll_array)
             if hit:
                 if not inside:
                     inside = True
@@ -599,7 +599,7 @@ class SplinePlanner(Planner):
 
         # 4. Check each window sample for gate violation
         for p in window_pts:
-            hit, _, _ = self._check_gate(p, pGLL_array, y_GBL_array)
+            hit, _, _ = self._check_gate3(p, pGLL_array, y_GBL_array)
             if hit:
                 return True
 
@@ -634,7 +634,7 @@ class SplinePlanner(Planner):
 
             # Check each point from dense Spline for collision with obsticle
             for i, p in enumerate(pts):
-                hit_gate, gate_centre, gate_yaw = self._check_gate(p, pGLL_array, y_GBL_array)
+                hit_gate, gate_centre, gate_yaw = self._check_gate3(p, pGLL_array, y_GBL_array)
 
                 if hit_gate:
                     if not inside_gate:
@@ -739,7 +739,7 @@ class SplinePlanner(Planner):
         entry_yaw = None
 
         for i, p in enumerate(pts):
-            hit, gate_c, gate_yaw = self._check_gate(p, pGLL_array, y_GBL_array)
+            hit, gate_c, gate_yaw = self._check_gate3(p, pGLL_array, y_GBL_array)
             if hit:
                 if skip_approach:
                     # Identify which gate was hit
@@ -878,7 +878,7 @@ class SplinePlanner(Planner):
         gate_hits = 0
         inside_gate = False
         for p in window_pts:
-            hit, _, _ = self._check_gate(p, pGLL_array, y_GBL_array)
+            hit, _, _ = self._check_gate3(p, pGLL_array, y_GBL_array)
             if hit:
                 if not inside_gate:
                     gate_hits += 1
@@ -891,7 +891,7 @@ class SplinePlanner(Planner):
         inside_obst = False
         if len(p_oll_array) > 0:
             for p in window_pts:
-                hit, _ = self._check_obsticle(p, p_oll_array)
+                hit, _ = self._check_obsticle2(p, p_oll_array)
                 if hit:
                     if not inside_obst:
                         obst_hits += 1
@@ -904,7 +904,7 @@ class SplinePlanner(Planner):
         inside_gate = False
         violation_arclens = []  # NEW: track where violations happen
         for j, p in enumerate(window_pts):
-            hit, _, _ = self._check_gate(p, pGLL_array, y_GBL_array)
+            hit, _, _ = self._check_gate3(p, pGLL_array, y_GBL_array)
             if hit:
                 violation_arclens.append(window_cum[j])  # NEW
                 if not inside_gate:
@@ -1166,7 +1166,7 @@ class SplinePlanner(Planner):
         entry_i = None
 
         for i, p in enumerate(pts):
-            hit, _, _ = self._check_gate(p, target_arr, yaw_arr)
+            hit, _, _ = self._check_gate3(p, target_arr, yaw_arr)
             if hit:
                 if not inside:
                     inside = True
@@ -1248,8 +1248,8 @@ class SplinePlanner(Planner):
 
             # Check each point from dense Spline for collision with obsticle
             for i, p in enumerate(pts):
-                hit_obsticle, obsticle_centre = self._check_obsticle(p, p_oll_array)
-                hit_gate, gate_centre, gate_yaw = self._check_gate(p, pGLL_array, y_GBL_array)
+                hit_obsticle, obsticle_centre = self._check_obsticle2(p, p_oll_array)
+                hit_gate, gate_centre, gate_yaw = self._check_gate3(p, pGLL_array, y_GBL_array)
 
                 if hit_obsticle:
                     if not inside_obst:
@@ -1387,7 +1387,7 @@ class SplinePlanner(Planner):
         yaw_arr = np.array([target_gate_yaw])
         violation_mask = np.zeros(len(pts), dtype=bool)
         for i, p in enumerate(pts):
-            hit, _, _ = self._check_gate(p, target_arr, yaw_arr)
+            hit, _, _ = self._check_gate3(p, target_arr, yaw_arr)
             violation_mask[i] = hit
         violation_pts = pts[violation_mask]
 
@@ -1636,7 +1636,7 @@ class SplinePlanner(Planner):
         # Find violation samples (any gate frame)
         violation_mask = np.zeros(len(pts), dtype=bool)
         for i, p in enumerate(pts):
-            hit, _, _ = self._check_gate(p, pGLL_array, y_GBL_array)
+            hit, _, _ = self._check_gate3(p, pGLL_array, y_GBL_array)
             violation_mask[i] = hit
         violation_pts = pts[violation_mask]
 
